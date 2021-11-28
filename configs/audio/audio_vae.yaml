@@ -1,0 +1,55 @@
+data:
+  module: AudioDataModule
+  dataset:
+    root: /Volumes/Cochon/Datasets/acidsInstruments-test
+    sr: 44100
+    target_length: &target_length 4.0
+#    sequence:
+#      mode: random
+#      length: 1
+#      idx: -2
+    flatten: 0
+  transforms:
+    name: nsgt-96
+    force: 0
+    pre_transforms: [{type: Mono},
+                     {type: NSGT, args: {bins: 96, ls: *target_length, downsample: 10}}]
+    transforms: [{type: Magnitude, args:{contrast: log1p, shrink: 4, normalize: {mode: minmax, scale: unipolar}}}]
+  loader:
+    batch_size: 128
+
+model:
+  type: AutoEncoder
+  encoder:
+    type: MLPEncoder
+    args:
+      nlayers: 2
+      dims: 800
+      nnlin: Sigmoid
+  decoder:
+    type: MLPEncoder
+    args:
+      nlayers: 2
+      dims: 200
+      nnlin: Sigmoid
+      out_nnlin: Softplus
+      target_dist: Normal
+  latent:
+    dist: Normal
+    dim: 16
+  training:
+    reconstruction:
+      type: LogDensity
+    regularization:
+      type: KLD
+    lr: 1.e-3
+    beta: 1.0
+    warmup: 0
+
+save:
+  path: saves/
+  name: test
+
+
+
+

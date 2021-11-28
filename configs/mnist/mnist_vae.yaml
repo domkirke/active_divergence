@@ -1,0 +1,41 @@
+data:
+  module: MNISTDataModule
+  dataset:
+    binary: 1
+  loader:
+    batch_size: 128
+
+model:
+  type: AutoEncoder
+  encoder:
+    type: MLPEncoder
+    args:
+      nlayers: 2
+      dims: 800
+      nnlin: Sigmoid
+  decoder:
+    type: MLPEncoder
+    args:
+      nlayers: 2
+      dims: 200
+      nnlin: Sigmoid
+      target_dist: Bernoulli
+  latent:
+    dist: Normal
+    dim: 16
+  training:
+    reconstruction:
+      type: LogDensity
+    regularization:
+      type: KLD
+    lr: 1.e-3
+    beta: 1.0
+    warmup: 0
+
+save:
+  path: saves/
+  name: test
+
+
+
+
