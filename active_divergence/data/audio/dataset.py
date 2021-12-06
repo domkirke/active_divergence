@@ -137,6 +137,7 @@ class AudioDataset(Dataset):
         self._pre_transform = AudioTransform()
         self.transforms = transforms
         self._drop_time = False
+        self.scale_amount = kwargs.get('scale_amount', self.scale_amount)
         # metadata attributes
         self._active_tasks = []
         self.target_transforms = target_transforms
@@ -386,7 +387,7 @@ class AudioDataset(Dataset):
         self.files = files
         self.hash = {self.files[i]:i for i in range(len(self.files))}
 
-    def import_data(self, flatten=False, scale=True, write_transforms=False, save_transform_as=None):
+    def import_data(self, flatten=False, scale=None, write_transforms=False, save_transform_as=None):
         """
         Imports data from root directory (must be parsed beforehand)
         Args:
@@ -425,7 +426,10 @@ class AudioDataset(Dataset):
         self.metadata = {**self.metadata, **metadata}
 
         # scale preprocessings
-        self.scale_transform(scale)
+        if self._transforms.needs_scaling:
+            if scale is None:
+                scale = self.scale_amount
+            self.scale_transform(scale)
 
         if write_transforms:
             self.write_transforms(save_as=save_transform_as)

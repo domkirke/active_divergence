@@ -1,4 +1,4 @@
-import os, sys
+import os, sys, pdb
 sys.path.append('..')
 from active_divergence.data.audio import AudioDataset
 from active_divergence.data.audio import transforms
@@ -44,8 +44,7 @@ class AudioDataModule(LightningDataModule):
                 assert name is not None
                 pre_transforms = parse_transforms(transform_args.pre_transforms) or transforms.AudioTransform()
                 dataset.transforms = pre_transforms
-                scale = transform_args.scale if transform_args.scale is not None else True
-                dataset.import_data(write_transforms=True, save_transform_as=name, scale=scale)
+                dataset.import_data(write_transforms=True, save_transform_as=name)
         else:
             dataset.import_data()
         current_transforms = parse_transforms(transform_args.transforms or transforms.AudioTransform())

@@ -2,8 +2,7 @@ import argparse, pdb, os, sys
 sys.path.append('../')
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint, ModelSummary
-from active_divergence import data
-from active_divergence import models
+from active_divergence import data, models, get_callbacks
 from active_divergence.utils import Config,save_config
 from active_divergence.monitor import DissectionMonitor, AudioReconstructionMonitor
 import tensorflow as tf
@@ -12,7 +11,6 @@ from active_divergence.utils.misc import checkdir
 tf.io.gfile = tb.compat.tensorflow_stub.io.gfile
 
 # Arguments
-trainer_args = ["--limit_train_batches", "--limit_valid_batches"]
 parser = argparse.ArgumentParser()
 parser.add_argument("config", type=str, help="YAML configuration file")
 pl.Trainer.add_argparse_args(parser)
@@ -42,7 +40,7 @@ else:
 lr_monitor = LearningRateMonitor(logging_interval='epoch')
 save_monitor = ModelCheckpoint(f"{config.save.path}/{config.save.name}", config.save.name, monitor="loss/valid", every_n_epochs=config.save.n_epochs)
 model_summary = ModelSummary(max_depth=1)
-callbacks = [lr_monitor, save_monitor, model_summary, DissectionMonitor(), AudioReconstructionMonitor()]#, ReconstructionMonitor(), DissectionMonitor()]
+callbacks = [lr_monitor, save_monitor, model_summary] + get_callbacks(config.callbacks) #DissectionMonitor(), AudioReconstructionMonitor()]#, ReconstructionMonitor(), DissectionMonitor()]
 
 # Train!
 trainer = pl.Trainer.from_argparse_args(args, callbacks=callbacks)

@@ -1,4 +1,4 @@
-import numpy as np, torch, torch.nn as nn, torch.nn.functional as F, torch.distributions as dist, sys
+import numpy as np, torch, torch.nn as nn, torch.nn.functional as F, torch.distributions as dist, sys, pdb
 sys.path.append('../')
 from active_divergence.modules import encoders
 from active_divergence.utils import Config, checklist
@@ -38,6 +38,10 @@ class AutoEncoder(pl.LightningModule):
         self.config = config
         self.save_hyperparameters(self.config.dict())
 
+    @property
+    def device(self):
+        return next(self.parameters()).device
+
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.config.training.lr or 1e-3)
         return optimizer
@@ -71,10 +75,10 @@ class AutoEncoder(pl.LightningModule):
 
     def loss(self, batch, x, z_params, z, **kwargs):
         rec_loss = self.reconstruction_loss(x, batch)
-        prior = self.prior(z.shape)
+        prior = self.prior(z.shape, device=batch.device)
         reg_loss = self.regularization_loss(prior, z_params)
-        beta = self.config.training.beta or 1.0
-        if self.config.training.warmup and kwargs.get('epoch'):
+        beta = self.config.training.beta if self.config.training.beta is not None else 1.0
+        if self.config.training.warmup and (kwargs.get('epoch') is not None):
             beta = min(int(kwargs.get('epoch')) / self.config.training.warmup, beta)
         return rec_loss + beta * reg_loss, (rec_loss, reg_loss)
 
@@ -82,7 +86,7 @@ class AutoEncoder(pl.LightningModule):
         batch, y = batch
         # training_step defined the train loop.
         x, z_params, z = self.full_forward(batch, batch_idx)
-        loss, (rec_loss, reg_loss) = self.loss(batch, x, z_params, z)
+        loss, (rec_loss, reg_loss) = self.loss(batch, x, z_params, z, epoch=self.trainer.current_epoch)
         self.log("rec_loss/train", rec_loss, prog_bar=True)
         self.log("reg_loss/train", reg_loss, prog_bar=True)
         self.log("loss/train", loss, prog_bar=True)
@@ -103,21 +107,26 @@ class AutoEncoder(pl.LightningModule):
         embedding = self.encoder(x)
         return embedding
 
-    def reconstruct(self, x, *args, sample_latent=False, sample_data=False, **kwargs):
+    def reconstruct(self, x, *args, sample_latent=False, sample_data=False, only_data=False, **kwargs):
         if isinstance(x, (tuple, list)):
             x, y = x
-        x_out, _, _ = self.full_forward(x, sample=sample_latent)
+        x_out, _, _ = self.full_forward(x.to(self.device), sample=sample_latent)
         if sample_data and isinstance(x_out, dist.Distribution):
-            x_out = x_out.sample()
+            x_out = [x_out.sample()]
+        elif isinstance(x_out, dist.Normal):
+            x_out = [x_out.mean, x_out.stddev]
         elif isinstance(x_out, dist.Distribution):
-            x_out = x_out.mean
+            x_out = [x_out.mean]
+        #TODO baaah
+        if only_data:
+            x_out = x_out[1]
         return x, x_out
 
     def sample_from_prior(self, n_samples=1, temperature=1.0, sample=False):
         temperature = checklist(temperature)
         generations = []
         for t in temperature:
-            z = torch.randn((n_samples, self.latent.dim)) * t
+            z = torch.randn((n_samples, self.latent.dim), device=self.device) * t
             x = self.decode(z)
             if sample:
                 x = x.sample()
@@ -127,10 +136,10 @@ class AutoEncoder(pl.LightningModule):
         return torch.stack(generations, 1)
 
     def trace_from_inputs(self, x):
-        if isinstance(x, tuple):
+        if isinstance(x, (tuple, list)):
             x, y = x
         trace = {}
-        reconstructions, z_params, z = self.full_forward(x, trace=trace)
+        reconstructions, z_params, z = self.full_forward(x.to(self.device), trace=trace)
         full_trace = {'embeddings':{'latent':z_params.mean},
                       'histograms':{'latent_std': z_params.stddev}}
         return full_trace

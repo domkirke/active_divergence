@@ -79,7 +79,6 @@ class ComposeAudioTransform(AudioTransform):
 
 ## UTILITY
 
-
 def apply_transform_to_list(transform, data, time=None, **kwargs):
     if time is None:
         outs = [transform(data[i], **kwargs) for i in range(len(data))]
@@ -263,8 +262,6 @@ class HPS(STFT):
 
     def invert(self, x, *args, **kwargs):
         raise NotInvertibleError
-
-
 
 
 class PowerSpectrum(STFT):
@@ -685,7 +682,7 @@ class NSGT(AudioTransform):
             if phase.shape[-1] > mag.shape[-1]:
                 phase = phase[..., :spec.shape[-1]]
         spec = mag * np.exp(phase * 1j)
-        inv = nsgt.backward(spec)
+        inv = np.real(nsgt.backward(spec))
         return inv
 
 
@@ -796,6 +793,7 @@ class Normalize(AudioTransform):
 
 
 class Magnitude(AudioTransform):
+    log_clamp = -8
     def __init__(self, normalize=None, contrast=None, shrink=1, global_norm=True, **kwargs):
         super(Magnitude, self).__init__()
         self.normalize = None
@@ -817,7 +815,7 @@ class Magnitude(AudioTransform):
         if self.constrast is None:
             return x
         elif self.constrast == "log":
-            return torch.log(x/self.shrink)
+            return torch.clamp(torch.log(x/self.shrink), self.log_clamp)
         elif self.constrast == "log1p":
             return torch.log1p(x/self.shrink)
         else:
@@ -834,7 +832,6 @@ class Magnitude(AudioTransform):
     def __call__(self, x, time=None, sr=None):
         if isinstance(x, list):
             return apply_transform_to_list(self, x, time=time, sr=sr)
-
         out = self.preprocess(x)
         if self.normalize is not None:
             out = self.normalize(out)
@@ -849,6 +846,7 @@ class Magnitude(AudioTransform):
         if self.normalize is not None:
             x = self.normalize.invert(x)
         if self.constrast == "log":
+            x[x <= self.log_clamp] = -torch.inf
             x = torch.exp(x)*self.shrink
         elif self.constrast == "log1p":
             x = torch.expm1(x)*self.shrink
@@ -972,3 +970,7 @@ class Window(AudioTransform):
             return x, time
         else:
             return x
+
+
+#TODO add Instantenous Frequency
+#TODO real + imag repr

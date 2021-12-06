@@ -18,3 +18,11 @@ class LogDensity(Loss):
         ld = self.reduce(-params1.log_prob(params2))
         return ld
 
+
+
+## AUDIO LOSSES
+
+#TODO Spectral Losses
+#TODO Multi-resolution spectral Losses
+#TODO Perceptual weighting (pre-emphasis)
+

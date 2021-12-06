@@ -1,2 +1,2 @@
 from .dissection import DissectionMonitor
-from .generation import AudioReconstructionMonitor
+from .generation import ImgReconstructionMonitor, AudioReconstructionMonitor

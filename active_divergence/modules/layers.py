@@ -326,8 +326,6 @@ class MLPLayer(nn.Module):
             out = self.activation(out)
         return out
 
-
-
     def _init_modules(self):
         if self.nn_lin:
             gain = calculate_gain(self.nn_lin, param=None)
@@ -792,10 +790,15 @@ class MLP(nn.Module):
         dims = [input_dim]+checklist(dim, n=nlayers)+[output_dim]
         layers = []
         layer_class = layer or self.Layer
+        if isinstance(nn_lin, list):
+            assert len(nn_lin) in (nlayers, nlayers+1)
+            if len(nn_lin) == nlayers:
+                nn_lin.append(None)
+        else:
+            nn_lin = [nn_lin] * nlayers + [None]
         for i in range(len(dims)-1):
-            current_nnlin = nn_lin if i<len(dims)-2 else None
             current_norm = norm if i<len(dims)-2 else None
-            layers.append(layer_class(dims[i], dims[i+1], nn_lin=current_nnlin, norm=current_norm, dropout=dropout))
+            layers.append(layer_class(dims[i], dims[i+1], nn_lin=nn_lin[i], norm=current_norm, dropout=dropout))
         self.module = nn.Sequential(*tuple(layers))
 
     def forward(self, x: torch.Tensor, mod_closure=None, trace=None) -> torch.Tensor:

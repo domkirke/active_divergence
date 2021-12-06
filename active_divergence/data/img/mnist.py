@@ -32,30 +32,30 @@ class MNISTDataModule(LightningDataModule):
         else:
             transform = transforms.Compose([transforms.ToTensor()])
         # split dataset
-        if stage in (None, "fit"):
-            mnist_train = MNIST(os.getcwd(), train=True, transform=transform)
-            self.mnist_train, self.mnist_val = random_split(mnist_train, [55000, 5000])
-        if stage == "test":
-            self.mnist_test = MNIST(os.getcwd(), train=False, transform=transform)
-        if stage == "predict":
-            self.mnist_predict = MNIST(os.getcwd(), train=False, transform=transform)
+        mnist_train = MNIST(os.getcwd(), train=True, transform=transform)
+        self.mnist_train, self.mnist_val = random_split(mnist_train, [55000, 5000])
+        self.mnist_test = MNIST(os.getcwd(), train=False, transform=transform)
 
     # return the dataloader for each split
     def train_dataloader(self, batch_size=None):
-        mnist_train = DataLoader(self.mnist_train, **self.loader_args)
-        return mnist_train
+        loader_args = self.loader_args
+        loader_args['batch_size'] = batch_size or loader_args.get('batch_size', 128)
+        loader_train = DataLoader(self.mnist_train, **loader_args)
+        return loader_train
 
     def val_dataloader(self, batch_size=None):
-        mnist_val = DataLoader(self.mnist_val, **self.loader_args)
-        return mnist_val
+        loader_args = self.loader_args
+        loader_args['batch_size'] = batch_size or loader_args.get('batch_size', 128)
+        loader_val = DataLoader(self.mnist_val, **loader_args)
+        return loader_val
 
     def test_dataloader(self, batch_size=None):
-        mnist_test = DataLoader(self.mnist_test,  **self.loader_args)
-        return mnist_test
-
-    def predict_dataloader(self, batch_size=None):
-        mnist_predict = DataLoader(self.mnist_predict, **self.loader_args)
-        return mnist_predict
+        if self.test_dataset is None:
+            return None
+        loader_args = self.loader_args
+        loader_args['batch_size'] = batch_size or loader_args.get('batch_size', 128)
+        loader_test = DataLoader(self.mnist_test, **loader_args)
+        return loader_test
 
     # utils callback
     def train_dataset(self):
