@@ -32,4 +32,6 @@ def parse_temporal_with_onsets(type):
     return closure
 
 metadata_hash = {'chord': parse_temporal_with_onsets(str),
-                 'tempo': read_single_metadata(float)}
+                 'tempo': read_single_metadata(float),
+                 'importRawInt': read_single_metadata(int),
+                 'importRawFloat': read_single_metadata(float)}

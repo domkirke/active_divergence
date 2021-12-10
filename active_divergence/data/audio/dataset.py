@@ -20,12 +20,6 @@ def parse_audio_file(f, sr=None, len=None, mix=True):
             x = x[..., :len]
     if f_sr != sr:
         x = torchaudio.transforms.Resample(f_sr, sr)(x)
-    # if x.shape[0] > 1:
-    #     if mix:
-    #         x = x.mean(0)
-    #     else:
-    #         x = x[0]
-    #     x = x[np.newaxis]
     return x, {'time':torch.Tensor([0.0]), 'sr':sr or f_sr}
 
 def parse_folder(d, valid_exts):
@@ -101,17 +95,26 @@ class AudioDataset(Dataset):
     def _settransform(self, transforms):
         assert isinstance(transforms, AudioTransform)
         self._transforms = transforms
-        if self._transforms.needs_scaling:
+        if self._transforms.needs_scaling and len(self.data) > 0:
             self.scale_transform(self.scale_amount)
-
     def _gettransform(self):
         return self._transforms
-
     def _deltransform(self):
         self._transforms = AudioTransform()
     transforms = property(_gettransform, _settransform, _deltransform)
 
-    def __init__(self, root, sr=None, transforms=AudioTransform(), target_length=None, target_transforms=None, drop_time=False, **kwargs):
+    def _setactivetasks(self, active_tasks):
+        active_tasks = checklist(active_tasks)
+        for a in active_tasks:
+            assert a in self.metadata.keys()
+        self._active_tasks = active_tasks
+    def _getactivetasks(self):
+        return self._active_tasks
+    def _delactivetasks(self):
+        self._active_tasks = []
+    active_tasks = property(_getactivetasks, _setactivetasks, _delactivetasks)
+
+    def __init__(self, root, sr=None, transforms=AudioTransform(), target_length=None, target_transforms=None, drop_time=False, active_tasks = [], **kwargs):
         """
         Args:
             root (string): root folder
@@ -128,6 +131,7 @@ class AudioDataset(Dataset):
         self.target_length = target_length
         self.data = []
         self.metadata = {}
+        self.classes = {}
         self.sr = sr or 44100
         self.partitions = {}
         self.partition_files = None
@@ -139,7 +143,7 @@ class AudioDataset(Dataset):
         self._drop_time = False
         self.scale_amount = kwargs.get('scale_amount', self.scale_amount)
         # metadata attributes
-        self._active_tasks = []
+        self._active_tasks = active_tasks
         self.target_transforms = target_transforms
         # sequence attributes
         self._sequence_mode = None
@@ -147,21 +151,20 @@ class AudioDataset(Dataset):
         self._sequence_idx = -2
         self._dtype = torch.get_default_dtype()
 
-
-
     @property
     def available_transforms(self):
-        transform_dir = f"{self.root_directory}/transforms"
+        transform_dir = f"{self.root_directory}/data"
         if not os.path.isdir(transform_dir):
             return []
         transforms = os.listdir(transform_dir)
         available_transforms = []
         for d in transforms:
             current_dir = f"{transform_dir}/{d}"
-            if not os.path.isdir(current_dir):
-                continue
-            if not os.path.isfile(current_dir+"/parsing.ldn"):
-                continue
+            if d != "raw":
+                if not os.path.isdir(current_dir):
+                    continue
+                if not os.path.isfile(current_dir+"/parsing.ldn"):
+                    continue
             available_transforms.append(d)
         return available_transforms
 
@@ -194,38 +197,6 @@ class AudioDataset(Dataset):
 
         return data, metadata
 
-        """
-        # transform
-        if self._transforms is not None:
-            if isinstance(data, list):
-                time = [checktensor(self.metadata['time'][it][seq_indices[i]]) for i,it in enumerate(item)]
-                data = [self._transforms(data[i], time=time[i]) for i in range(len(data))]
-                time = [d[1] for d in data]; data = [d[0] for d in data]
-            else:
-                if isinstance(item, list):
-                    time = torch.Tensor([self.metadata['time'][t][seq_indices[t]] for t in item])
-                else:
-                    time = checktensor(self.metadata['time'][item][seq_indices])
-                data, time = self._transforms(data, time=time)
-        # retrieve metadata
-        if hasattr(item, "__iter__"):
-            metadata = [self._get_item_metadata(i, time[it], seq=seq_indices[it]) for it, i in enumerate(item)]
-            metadata = {k: [metadata[i][k] for i in range(len(metadata))] for k in metadata[0].keys()}
-        else:
-            metadata = self._get_item_metadata(item, time, seq=seq_indices)
-        # check and collate
-        data = checktensor(data, dtype=self._dtype)
-        metadata = checktensor(metadata)
-        if hasattr(item, "__iter__"):
-            pack = kwargs.get('pack', True)
-            lengths = [d.shape[0] for d in data]
-            data = collate_out(data, pack=pack)
-            metadata = {k: collate_out(v, pack=pack) for k, v in metadata.items()}
-            metadata['lengths'] = torch.LongTensor(lengths)
-        else:
-            metadata['lengths'] = torch.LongTensor(data.shape[0])
-        return data, metadata
-        """""
 
     def _get_item(self, item: int, **kwargs):
         sequence_mode = kwargs.get('sequence_mode', self._sequence_mode)
@@ -319,7 +290,7 @@ class AudioDataset(Dataset):
     def has_sequences(self):
         return isinstance(self.data[0], list)
 
-    def drop_sequences(self, sequence_length, mode="random", idx=None):
+    def drop_sequences(self, sequence_length, idx=None, mode="random"):
         if sequence_length is None:
             self._sequence_mode = None
             self._sequence_length = None
@@ -422,15 +393,9 @@ class AudioDataset(Dataset):
         self.data = data
         self.hash = hash
         self.files = files
+
         self.import_metadata()
         self.metadata = {**self.metadata, **metadata}
-
-        # scale preprocessings
-        if self._transforms.needs_scaling:
-            if scale is None:
-                scale = self.scale_amount
-            self.scale_transform(scale)
-
         if write_transforms:
             self.write_transforms(save_as=save_transform_as)
 
@@ -466,8 +431,21 @@ class AudioDataset(Dataset):
 
         metadata = {}
         for t in tasks:
-            if t not in metadata_hash:
+            if os.path.isfile(f"{metadata_directory}/{t}/callback.txt"):
+                with open(f"{metadata_directory}/{t}/callback.txt", 'r') as f:
+                    callback = re.sub('\n', '', f.read())
+                callback = metadata_hash.get(callback)
+            else:
+                callback = metadata_hash.get(t)
+            if callback is None:
+                print('[Warning] could not find callback for task %s'%t)
                 continue
+            if os.path.isfile(f"{metadata_directory}/{t}/classes.txt"):
+                self.classes[t] = {}
+                with open(f"{metadata_directory}/{t}/classes.txt", 'r') as f:
+                    for l in f.readlines():
+                        class_id, name = re.sub('\n', '',l).split('\t')
+                        self.classes[t][int(class_id)] = name
             current_hash = {}
             current_directory = f"{metadata_directory}/{t}"
             metadata[t] = [None] * len(self.files)
@@ -477,7 +455,7 @@ class AudioDataset(Dataset):
                     current_hash[file] = raw_metadata
             for file, idx in self.hash.items():
                 if file in current_hash.keys():
-                    current_metadata = metadata_hash[t](raw_metadata, current_path=current_directory)
+                    current_metadata = callback(current_hash[file], current_path=current_directory)
                     metadata[t][idx] = current_metadata
                 else:
                     print('warning : file %s not found in metadata'%(file, ))
@@ -621,7 +599,7 @@ class AudioDataset(Dataset):
         self.target_length = save_dict.get('target_length')
         self.partitions = save_dict.get('partitions', {})
         self.partition_files = save_dict.get('partition_files')
-        self.active_tasks = save_dict.get('active_tasks', [])
+        self._active_tasks = save_dict.get('active_tasks', [])
         self._pre_transform =save_dict.get('pre_transform')
         self._sequence_mode = save_dict.get('sequence_mode')
         self._sequence_length = save_dict.get('sequence_length')

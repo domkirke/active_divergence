@@ -2,9 +2,8 @@ import argparse, pdb, os, sys
 sys.path.append('../')
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint, ModelSummary
-from active_divergence import data, models, get_callbacks
+from active_divergence import data, models, get_callbacks, get_plugins
 from active_divergence.utils import Config,save_config
-from active_divergence.monitor import DissectionMonitor, AudioReconstructionMonitor
 import tensorflow as tf
 import tensorboard as tb
 from active_divergence.utils.misc import checkdir
@@ -40,10 +39,11 @@ else:
 lr_monitor = LearningRateMonitor(logging_interval='epoch')
 save_monitor = ModelCheckpoint(f"{config.save.path}/{config.save.name}", config.save.name, monitor="loss/valid", every_n_epochs=config.save.n_epochs)
 model_summary = ModelSummary(max_depth=1)
-callbacks = [lr_monitor, save_monitor, model_summary] + get_callbacks(config.callbacks) #DissectionMonitor(), AudioReconstructionMonitor()]#, ReconstructionMonitor(), DissectionMonitor()]
+callbacks = [lr_monitor, save_monitor, model_summary] + get_callbacks(config.callbacks)
+plugins = [] + get_plugins(config.plugins)
 
 # Train!
-trainer = pl.Trainer.from_argparse_args(args, callbacks=callbacks)
+trainer = pl.Trainer.from_argparse_args(args, callbacks=callbacks, plugins=plugins)
 if args.check:
     pdb.set_trace()
 trainer.fit(model, datamodule=data)

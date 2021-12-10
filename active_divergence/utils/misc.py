@@ -134,7 +134,53 @@ def overlap_add(array, wsize, hsize, window=None):
     return buffer
 
 
+def unwrap(tensor: torch.Tensor):
+    """
+    unwrap phase for tensors
+    :param tensor: phase to unwrap (seq x spec_bin)
+    :return: unwrapped phase
+    """
+    if isinstance(tensor, list):
+        return [unwrap(t) for t in tensor]
+    if tensor.ndimension() == 2:
+        unwrapped = tensor.clone()
+        diff = tensor[1:] - tensor[:-1]
+        ddmod = (diff + torch.pi)%(2 * torch.pi) - torch.pi
+        mask = (ddmod == -torch.pi).bitwise_and(diff > 0)
+        ddmod[mask] = torch.pi
+        ph_correct = ddmod - diff
+        ph_correct[diff.abs() < torch.pi] = 0
+        unwrapped[1:] = tensor[1:] + torch.cumsum(ph_correct, 1)
+        return unwrapped
+    else:
+        return torch.stack([unwrap(tensor[i]) for i in range(tensor.size(0))], dim=0)
 
+
+def fdiff(x, order=2):
+    if order == 1:
+        inst_f = torch.cat([x[0].unsqueeze(0), (x[1:] - x[:-1])/2], axis=0)
+    elif order == 2:
+        inst_f = torch.cat([x[0].unsqueeze(0), (x[2:] - x[:-2])/4, x[-1].unsqueeze(0)], axis=0)
+    return inst_f
+
+
+def fint(x, order=1):
+    if order == 1:
+        out = x
+        out[1:] = out[1:] * 2
+        if torch.is_tensor(x):
+            out = torch.cumsum(out, axis=0)
+        else:
+            out = torch.cumsum(out, axis=0)
+    elif order == 2:
+        out = torch.zeros_like(x)
+        out[0] = x[0]; out[-1] = x[-1]
+
+        for i in range(2, x.shape[0], 2):
+            out[i] = out[i-2] + 4 * x[i-1]
+        for i in reversed(range(1, x.shape[0], 2)):
+            out[i-2] = out[i] - 4 * x[i-1]
+    return out
 
 
 class ContinuousSlice(object):

@@ -36,6 +36,15 @@ save:
   path: saves/
   name: test
 
+callbacks:
+  [
+  {type: DissectionMonitor},
+  {type: ImgReconstructionMonitor}
+  ]
 
+plugins:
+  [
+  { type: ADCheckpointIO }
+  ]
 
 

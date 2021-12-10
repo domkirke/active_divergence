@@ -124,7 +124,6 @@ class AudioReconstructionMonitor(Callback):
         #pdb.set_trace()
         return check_mono(originals, normalize=True), check_mono(generations, normalize=True)
 
-
     def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
         with torch.no_grad():
             if trainer.state.stage == RunningStage.SANITY_CHECKING:

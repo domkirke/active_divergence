@@ -1,2 +1,2 @@
-from .dissection import DissectionMonitor
-from .generation import ImgReconstructionMonitor, AudioReconstructionMonitor
+
+from active_divergence.monitor import callbacks, plugins
