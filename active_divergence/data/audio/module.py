@@ -1,4 +1,5 @@
 import os, sys, pdb
+from typing import Type
 sys.path.append('..')
 from active_divergence.data.audio import AudioDataset
 from active_divergence.data.audio import transforms
@@ -22,18 +23,16 @@ class AudioDataModule(LightningDataModule):
     def __init__(self, config, **kwargs):
         super().__init__()
         self.dataset = None
-        self.dataset_args = config.dataset.dict()
+        self.dataset_args = dict(config.dataset)
         self.transform_args = config.transforms
-        self.loader_args = config.loader.dict()
-        self.partition_balance = config.partition_balance or [0.8, 0.2]
+        self.loader_args = config.get('loader', {})
+        self.partition_balance = config.get('partition_balance', [0.8, 0.2])
         self.dataset = None
         self.train_dataset = None
         self.valid_dataset = None
         self.test_dataset = None
         self.import_datasets()
 
-    # When doing distributed training, Datamodules have two optional arguments for
-    # granular control over download/prepare/splitting data:
     def load_dataset(self, dataset_args, transform_args, make_partitions=False):
         dataset = AudioDataset(**dataset_args)
         if transform_args:
@@ -47,16 +46,26 @@ class AudioDataModule(LightningDataModule):
                 dataset.import_data(write_transforms=True, save_transform_as=name)
         else:
             dataset.import_data()
-        current_transforms = parse_transforms(transform_args.transforms or transforms.AudioTransform())
-        dataset.transforms = current_transforms
+        # flatten data in case
         if dataset_args.get('flatten') is not None:
             dataset.flatten_data(int(dataset_args['flatten']))
+        # import and scale transform
+        current_transforms = parse_transforms(transform_args.transforms or transforms.AudioTransform())
+        if dataset_args.get('scale') is not None and current_transforms.needs_scaling:
+            try: 
+                scale = int(dataset_args.get('scale'))
+            except TypeError:
+                scale = bool(dataset_args.get('scale'))
+            dataset.scale_amount = scale
+        dataset.transforms = current_transforms
+        # set partitions
         if make_partitions:
             dataset.make_partitions(['train', 'valid'], self.partition_balance)
+        # set sequence export
         if dataset_args.get('sequence'):
             dataset.drop_sequences(dataset_args['sequence'].get('length'),
-                                   dataset_args['sequence'].get('mode', "random"),
-                                   dataset_args['sequence'].get('idx', -2))
+                                   dataset_args['sequence'].get('idx', -2),
+                                   dataset_args['sequence'].get('mode', "random"))
         return dataset
 
     def import_datasets(self, stage = None):
@@ -67,7 +76,7 @@ class AudioDataModule(LightningDataModule):
 
     @property
     def shape(self):
-        return self.dataset.data[0].shape
+        return tuple(self.dataset[0][0].shape)
 
     # return the dataloader for each split
     def train_dataloader(self, batch_size=None):

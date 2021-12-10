@@ -1,4 +1,4 @@
-import os, sys
+import os, sys, pdb
 sys.path.append('..')
 from torch.utils.data import random_split, DataLoader
 from torchvision.datasets import MNIST
@@ -10,7 +10,7 @@ class MNISTDataModule(LightningDataModule):
     def __init__(self, config, **kwargs):
         super().__init__()
         self.data_args = config.dataset
-        self.loader_args = config.loader.dict()
+        self.loader_args = dict(config.loader)
 
     # When doing distributed training, Datamodules have two optional arguments for
     # granular control over download/prepare/splitting data:

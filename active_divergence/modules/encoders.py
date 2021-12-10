@@ -24,29 +24,29 @@ class MLPEncoder(nn.Module):
             config (Config): encoder configuration.
         """
         super(MLPEncoder, self).__init__()
-        self.input_size = config.input_dim
-        self.nlayers = config.nlayers or 3
-        self.hidden_dims = config.hidden_dims or 800
-        self.nn_lin = checklist(config.nn_lin or layers.DEFAULT_NNLIN, n=self.nlayers)
+        self.input_size = checklist(config.input_dim)
+        self.nlayers = config.get('nlayers', 3)
+        self.hidden_dims = config.get('hidden_dims', 800)
+        self.nn_lin = checklist(config.get('nn_lin') or layers.DEFAULT_NNLIN, n=self.nlayers)
         self.nn_lin.append(None)
-        self.out_nnlin = None if config.out_nnlin is None else getattr(nn, config.out_nnlin)()
-        self.norm = config.norm
-        self.dropout = config.dropout
-        self.target_dist = config.target_dist
+        self.out_nnlin = None if config.get('out_nnlin') is None else getattr(nn, config.get('out_nnlin'))()
+        self.norm = config.get('norm')
+        self.dropout = config.get('dropout')
+        self.target_dist = config.get('target_dist')
         if self.target_dist is not None:
             self.target_dist = checkdist(self.target_dist)
             if self.target_dist not in self.available_distributions:
                 return NotImplementedError('MLPEncoder does not support the distribution %s'%self.target_dist)
         else:
             self.target_dist = None
-        self.target_shape = config.target_shape
+        self.target_shape = config.get('target_shape')
         if hasattr(self.target_shape, "__iter__"):
-            self.target_shape = tuple([d for d in config.target_shape])
+            self.target_shape = tuple([d for d in self.target_shape])
         elif isinstance(self.target_shape, int):
             self.target_shape = (config.target_shape,)
         else:
             raise TypeError('target shape of %d module must be int / iterable ints'%(type(self)))
-        self.layer = self.Layer if config.layer is None else getattr(layers, config.layer)
+        self.layer = self.Layer if config.get('layer') is None else getattr(layers, config.layer)
         self._init_modules()
 
     def _init_modules(self):
@@ -67,7 +67,7 @@ class MLPEncoder(nn.Module):
         Returns:
             y (torch.Tensor or Distribution): encoded data.
         """
-        batch_shape = x.shape[:-len(checktuple(self.input_size))]
+        batch_shape = x.shape[:-len(checklist(self.input_size))]
         hidden = self.mlp(x.reshape(-1, np.prod(self.input_size)))
         if self.target_dist == dist.Normal:
             out = list(hidden.split(hidden.shape[-1]//2, -1))

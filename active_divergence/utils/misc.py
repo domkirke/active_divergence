@@ -1,4 +1,5 @@
 from collections import OrderedDict
+import omegaconf
 import numpy as np, os, torch, sys, torch.distributions as dist, copy, bisect
 sys.path.append('../')
 
@@ -20,7 +21,7 @@ def filter_nans(x: np.ndarray, y: np.ndarray = None):
 def checklist(item, n=1, copy=False):
     """Repeat list elemnts
     """
-    if not isinstance(item, list):
+    if not isinstance(item, (list, omegaconf.listconfig.ListConfig)):
         if copy:
             item = [copy.deepcopy(item) for _ in range(n)]
         else:

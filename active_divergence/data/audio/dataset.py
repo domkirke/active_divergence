@@ -153,7 +153,7 @@ class AudioDataset(Dataset):
 
     @property
     def available_transforms(self):
-        transform_dir = f"{self.root_directory}/data"
+        transform_dir = f"{self.root_directory}/transforms"
         if not os.path.isdir(transform_dir):
             return []
         transforms = os.listdir(transform_dir)
@@ -182,7 +182,7 @@ class AudioDataset(Dataset):
         else:
             data, seq_idx = self._get_item(item, **kwargs)
 
-        metadata = self._get_item_metadata(item)
+        metadata = self._get_item_metadata(item, seq=seq_idx)
 
         if self._transforms is not None:
             data = self._transforms(data, time=metadata.get('time'))
@@ -222,11 +222,14 @@ class AudioDataset(Dataset):
             else:
                 data = self.data[item].__getitem__(tuple(idx))
         else:
+            ndim = None
             if self.data.ndim is None:
-                raise IndexError
-            idx = [item] + [slice(None)] * (self.data.ndim-1)
+                ndim = len(self.data.entries[item].shape)
+            else:
+                ndim = self.data.ndim - 1
+            idx = [item] + [slice(None)] * (ndim)
             is_asynchronous = isinstance(self.data, lardon.OfflineDataList)
-            if sequence_length is None:
+            if sequence_length is not None:
                 if sequence_mode == "random":
                     if is_asynchronous:
                         idx[sequence_idx] = lardon.randslice(sequence_length)
@@ -243,8 +246,19 @@ class AudioDataset(Dataset):
     def _get_item_metadata(self, item: int, seq=None):
         if hasattr(item, "__iter__"):
             metadatas = [self._get_item_metadata(item[i], seq[i]) for i in range(len(item))]
-        seq = seq or slice(None)
-        metadata = {'time': torch.Tensor(self.metadata['time'][item][seq])}
+            compiled_metadata = {}
+            for k in metadatas[0].keys():
+                try:
+                    compiled_metadata[k] = torch.stack([m[k] for m in metadatas])
+                except:
+                    compiled_metadata[k] = [m[k] for m in metadatas]
+            return compiled_metadata
+                
+        seq = seq if seq is not None else slice(None)
+        if hasattr(seq, "__iter__"):
+            metadata = {'time': torch.Tensor(self.metadata['time'][item][seq])}
+        else:
+            metadata = {'time': torch.Tensor([self.metadata['time'][item][seq]])}
         for k in self._active_tasks+['sr']:
             current_meta = self.metadata[k][item]
             if isinstance(current_meta, ContinuousList):
@@ -326,6 +340,10 @@ class AudioDataset(Dataset):
         else:
             dataset.data = [self.data[d] for d in item]
         dataset.metadata = {k: (np.array(v)[item]).tolist() for k, v in self.metadata.items()}
+        dataset.files = [self.files[f] for f in item]
+        dataset.hash = {}
+        for i, f in enumerate(dataset.files):
+            dataset.hash[f] = dataset.hash.get(f, []) + [i]
         dataset._active_tasks = self._active_tasks
         dataset._sequence_length = self._sequence_length
         dataset._sequence_mode = self._sequence_mode
@@ -353,7 +371,7 @@ class AudioDataset(Dataset):
         for r, d, f in os.walk(self.root_directory+"/data"):
             for f_tmp in f:
                 if os.path.splitext(f_tmp)[1] in self.types:
-                    f_tmp = re.sub(os.path.abspath(self.root_directory), '', os.path.abspath(r+'/'+f_tmp))[1:]
+                    f_tmp = re.sub(os.path.abspath(self.root_directory+'/data'), '', os.path.abspath(r+'/'+f_tmp))[1:]
                     files.append(f_tmp)
         self.files = files
         self.hash = {self.files[i]:i for i in range(len(self.files))}
@@ -394,8 +412,7 @@ class AudioDataset(Dataset):
         self.hash = hash
         self.files = files
 
-        self.import_metadata()
-        self.metadata = {**self.metadata, **metadata}
+        self.metadata = {**self.import_metadata(), **metadata}
         if write_transforms:
             self.write_transforms(save_as=save_transform_as)
 
@@ -411,13 +428,18 @@ class AudioDataset(Dataset):
     def import_transform(self, transform):
         assert transform in self.available_transforms
         target_directory = f"{self.root_directory}/transforms/{transform}"
-        self.data, self.metadata = lardon.parse_folder(target_directory, drop_metadata=True)
+        if len(self.files) > 0:
+            files = [os.path.splitext(f)[0] + lardon.lardon_ext for f in self.files]
+        else:
+            files = None
+        self.data, self.metadata = lardon.parse_folder(target_directory, drop_metadata=True, files=files)
         with open(target_directory+'/transforms.ct', 'rb') as f:
             original_transform = dill.load(f)
         with open(target_directory + '/dataset.ct', 'rb') as f:
             save_dict = dill.load(f)
             self.load_dict(save_dict)
         self._pre_transform = original_transform
+        self.metadata = {**self.metadata, **self.import_metadata()}
         return original_transform
 
     def import_metadata(self):
@@ -459,7 +481,7 @@ class AudioDataset(Dataset):
                     metadata[t][idx] = current_metadata
                 else:
                     print('warning : file %s not found in metadata'%(file, ))
-        self.metadata = metadata
+        return metadata
 
     def write_transforms(self, save_as=None, force=False):
         """
@@ -503,7 +525,7 @@ class AudioDataset(Dataset):
 
 
     def flatten_data(self, axis=0):
-        data = [];
+        data = []
         metadata = {k: [] for k in self.metadata.keys()}
         files = []
         hash = {}

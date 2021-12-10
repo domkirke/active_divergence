@@ -1,7 +1,8 @@
 import numpy as np, torch, torch.nn as nn, torch.nn.functional as F, torch.distributions as dist, sys, pdb
 sys.path.append('../')
 from active_divergence.modules import encoders
-from active_divergence.utils import Config, checklist
+from active_divergence.utils import checklist
+from omegaconf import OmegaConf
 from active_divergence.losses import distortion, regularization, priors
 import pytorch_lightning as pl
 
@@ -9,41 +10,44 @@ import pytorch_lightning as pl
 class AutoEncoder(pl.LightningModule):
     def __init__(self, config=None, encoder=None, decoder=None, training=None, latent=None, data=None, **kwargs):
         super().__init__()
-        config = config or Config()
+        config = config or OmegaConf.create()
         if isinstance(config, dict):
-            config = Config(config)
+            config = OmegaConf(config)
         # latent config
-        config.latent = config.latent or Config(latent)
+        config.latent = config.get('latent') or latent
         self.latent = config.latent
         # architecture
-        config.encoder = config.encoder or Config(encoder)
-        config.encoder.args.input_dim = data.shape
-        config.encoder.args.target_shape = config.latent.dim
-        config.encoder.args.target_dist = config.latent.dist
+        config.encoder = config.get('encoder') or encoder
+        config.encoder.args = config.encoder.get('args', {})
+        config.encoder['args']['input_dim'] = list(data.shape)
+        config.encoder['args']['target_shape'] = config.latent.dim
+        config.encoder['args']['target_dist'] = config.latent.dist
         encoder_type = config.encoder.type or "MLPEncoder"
         self.encoder = getattr(encoders, encoder_type)(config.encoder.args)
-        config.decoder = config.decoder or Config(decoder)
+        config.decoder = config.get('decoder', decoder)
+        config.decoder.args = config.decoder.get('args', {})
         config.decoder.args.input_dim = config.latent.dim
         config.decoder.args.target_shape = data.shape
         decoder_type = config.decoder.type or "MLPDecoder"
         self.decoder = getattr(encoders, decoder_type)(config.decoder.args)
+
         # loss
-        config.training = config.training or Config(training)
-        rec_config = config.training.reconstruction or Config()
-        self.reconstruction_loss = getattr(distortion, rec_config.type or "LogDensity")(**(rec_config.args or Config()).dict())
-        reg_config = config.training.regularization or Config()
-        self.regularization_loss = getattr(regularization, reg_config.type or "KLD")(**(reg_config.args or Config()).dict())
-        self.prior = getattr(priors, config.training.prior or "isotropic_gaussian")
+        config.training = config.get('training', training)
+        rec_config = config.training.get('reconstruction', OmegaConf.create())
+        self.reconstruction_loss = getattr(distortion, rec_config.get('type', "LogDensity"))(**rec_config.get('args', {}))
+        reg_config = config.training.get('regularization', OmegaConf.create())
+        self.regularization_loss = getattr(regularization, reg_config.get('type', "KLD"))(**reg_config.get('args',{}))
+        self.prior = getattr(priors, config.training.get('prior', "isotropic_gaussian"))
         # record config
         self.config = config
-        self.save_hyperparameters(self.config.dict())
+        self.save_hyperparameters(dict(self.config))
 
     @property
     def device(self):
         return next(self.parameters()).device
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.config.training.lr or 1e-3)
+        optimizer = torch.optim.SGD(self.parameters(), lr=self.config.training.lr or 1e-3)
         return optimizer
 
     def encode(self, x):
@@ -80,7 +84,7 @@ class AutoEncoder(pl.LightningModule):
         beta = self.config.training.beta if self.config.training.beta is not None else 1.0
         if self.config.training.warmup and (kwargs.get('epoch') is not None):
             beta = min(int(kwargs.get('epoch')) / self.config.training.warmup, beta)
-        return rec_loss + beta * reg_loss, (rec_loss, reg_loss)
+        return rec_loss + beta * reg_loss, (rec_loss.detach(), reg_loss.detach())
 
     def training_step(self, batch, batch_idx):
         batch, y = batch
