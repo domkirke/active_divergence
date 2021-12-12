@@ -1,10 +1,11 @@
 import numpy as np, torch, torch.nn as nn, torch.nn.functional as F, torch.distributions as dist, sys, pdb
 sys.path.append('../')
 from active_divergence.modules import encoders
-from active_divergence.utils import checklist
+from active_divergence.utils import checklist, checkdir
 from omegaconf import OmegaConf
 from active_divergence.losses import distortion, regularization, priors
 import pytorch_lightning as pl
+from pytorch_lightning.trainer.states import RunningStage
 
 
 class AutoEncoder(pl.LightningModule):
@@ -38,6 +39,11 @@ class AutoEncoder(pl.LightningModule):
         reg_config = config.training.get('regularization', OmegaConf.create())
         self.regularization_loss = getattr(regularization, reg_config.get('type', "KLD"))(**reg_config.get('args',{}))
         self.prior = getattr(priors, config.training.get('prior', "isotropic_gaussian"))
+        save_config = config.training.get('save')
+        self.save_epochs = save_config.get('save_epochs')
+        if self.save_epochs is not None:
+            self.save_dir = f"{save_config.path}/{save_config.name}"
+            checkdir(self.save_dir)
         # record config
         self.config = config
         self.save_hyperparameters(dict(self.config))
@@ -91,6 +97,7 @@ class AutoEncoder(pl.LightningModule):
         # training_step defined the train loop.
         x, z_params, z = self.full_forward(batch, batch_idx)
         loss, (rec_loss, reg_loss) = self.loss(batch, x, z_params, z, epoch=self.trainer.current_epoch)
+        loss = nn.functional.mse_loss(x.mean, batch)
         self.log("rec_loss/train", rec_loss, prog_bar=True)
         self.log("reg_loss/train", reg_loss, prog_bar=True)
         self.log("loss/train", loss, prog_bar=True)

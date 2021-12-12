@@ -43,7 +43,7 @@ class AudioDataModule(LightningDataModule):
                 assert name is not None
                 pre_transforms = parse_transforms(transform_args.pre_transforms) or transforms.AudioTransform()
                 dataset.transforms = pre_transforms
-                dataset.import_data(write_transforms=True, save_transform_as=name)
+                dataset.import_data(write_transforms=True, save_transform_as=name, force=transform_args.force)
         else:
             dataset.import_data()
         # flatten data in case

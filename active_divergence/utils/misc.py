@@ -21,9 +21,11 @@ def filter_nans(x: np.ndarray, y: np.ndarray = None):
 def checklist(item, n=1, copy=False):
     """Repeat list elemnts
     """
-    if not isinstance(item, (list, omegaconf.listconfig.ListConfig)):
+    if not isinstance(item, (list, )):
         if copy:
             item = [copy.deepcopy(item) for _ in range(n)]
+        elif isinstance(item, omegaconf.listconfig.ListConfig):
+            item = list(item)
         else:
             item = [item]*n
     return item
@@ -33,6 +35,8 @@ def checktuple(item, n=1, copy=False):
     if not isinstance(item, tuple):
         if copy:
             item = tuple([copy.deepcopy(item) for _ in range(n)])
+        elif isinstance(item, omegaconf.listconfig.ListConfig):
+            item = tuple(item)
         else:
             item = tuple([item]*n)
     return item

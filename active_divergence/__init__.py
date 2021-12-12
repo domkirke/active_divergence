@@ -18,6 +18,8 @@ def get_callbacks(config):
 def get_plugins(config):
     if config is None:
         return []
+    if config.get("plugins") is None:
+        return []
     pgs = []
     for plugin in config:
         plugin_type = plugin['type']

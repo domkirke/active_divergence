@@ -142,6 +142,7 @@ class AudioDataset(Dataset):
         self.transforms = transforms
         self._drop_time = False
         self.scale_amount = kwargs.get('scale_amount', self.scale_amount)
+        self._flattened = None 
         # metadata attributes
         self._active_tasks = active_tasks
         self.target_transforms = target_transforms
@@ -203,7 +204,7 @@ class AudioDataset(Dataset):
         sequence_length = kwargs.get('sequence_length', self._sequence_length)
         sequence_idx = kwargs.get('sequence_idx', self._sequence_idx or 0)
         # importing data
-        seq_idx = torch.tensor(0, dtype=torch.long)
+        seq_idx = 0
         if isinstance(self.data, list):
             idx = [slice(None)] * len(self.data[item].shape)
             is_asynchronous = isinstance(self.data[item], lardon.OfflineDataList)
@@ -238,7 +239,7 @@ class AudioDataset(Dataset):
                         idx[sequence_idx] = slice(seq_idx, seq_idx + sequence_length)
             if is_asynchronous:
                 data, meta = self.data.__getitem__(tuple(idx), return_metadata=True, return_indices=True)
-                seq_idx = meta['idx'][sequence_idx]
+                #seq_idx = meta['idx'][sequence_idx]
             else:
                 data = self.data.__getitem__(idx)
         return data, seq_idx
@@ -256,9 +257,9 @@ class AudioDataset(Dataset):
                 
         seq = seq if seq is not None else slice(None)
         if hasattr(seq, "__iter__"):
-            metadata = {'time': torch.Tensor(self.metadata['time'][item][seq])}
+            metadata = {'time': torch.Tensor([self.metadata['time'][item][s] for s in seq])}
         else:
-            metadata = {'time': torch.Tensor([self.metadata['time'][item][seq]])}
+            metadata = {'time': torch.tensor([self.metadata['time'][item][seq]])}
         for k in self._active_tasks+['sr']:
             current_meta = self.metadata[k][item]
             if isinstance(current_meta, ContinuousList):
@@ -371,12 +372,12 @@ class AudioDataset(Dataset):
         for r, d, f in os.walk(self.root_directory+"/data"):
             for f_tmp in f:
                 if os.path.splitext(f_tmp)[1] in self.types:
-                    f_tmp = re.sub(os.path.abspath(self.root_directory+'/data'), '', os.path.abspath(r+'/'+f_tmp))[1:]
+                    f_tmp = re.sub(os.path.abspath(self.root_directory), '', os.path.abspath(r+'/'+f_tmp))[1:]
                     files.append(f_tmp)
         self.files = files
         self.hash = {self.files[i]:i for i in range(len(self.files))}
 
-    def import_data(self, flatten=False, scale=None, write_transforms=False, save_transform_as=None):
+    def import_data(self, flatten=False, scale=None, write_transforms=False, save_transform_as=None, force=False):
         """
         Imports data from root directory (must be parsed beforehand)
         Args:
@@ -389,7 +390,7 @@ class AudioDataset(Dataset):
         hash = {}
         running_id = 0
         for i, f in tqdm(enumerate(self.files), total=len(self.files), desc="Importing audio files..."):
-            current_data, current_metadata = parse_audio_file(os.path.abspath(self.root_directory+'/'+f), sr=self.sr, len=self.target_length)
+            current_data, current_metadata = parse_audio_file(os.path.abspath(self.root_directory+"/"+f), sr=self.sr, len=self.target_length)
             if len(metadata.keys()) == 0:
                 metadata = {k: [] for k in current_metadata.keys()}
             if flatten:
@@ -414,7 +415,7 @@ class AudioDataset(Dataset):
 
         self.metadata = {**self.import_metadata(), **metadata}
         if write_transforms:
-            self.write_transforms(save_as=save_transform_as)
+            self.write_transforms(save_as=save_transform_as, force=force)
 
     def scale_transform(self, scale):
         if scale and self._transforms is not None:
@@ -429,7 +430,7 @@ class AudioDataset(Dataset):
         assert transform in self.available_transforms
         target_directory = f"{self.root_directory}/transforms/{transform}"
         if len(self.files) > 0:
-            files = [os.path.splitext(f)[0] + lardon.lardon_ext for f in self.files]
+            files = [os.path.splitext(re.sub('data/','', f))[0] + lardon.lardon_ext for f in self.files]
         else:
             files = None
         self.data, self.metadata = lardon.parse_folder(target_directory, drop_metadata=True, files=files)
@@ -568,6 +569,7 @@ class AudioDataset(Dataset):
         self.files = files
         self._sequence_idx = None
         self._sequence_length = None
+        self._flattened = axis
 
 
     def get_attributes(self):
@@ -586,7 +588,8 @@ class AudioDataset(Dataset):
                 'pre_transform': self._pre_transform,
                 'sequence_mode': self._sequence_mode,
                 'sequence_length': self._sequence_length,
-                'sequence_idx':self._sequence_idx}
+                'sequence_idx':self._sequence_idx,
+                'flattened': self._flattened}
 
     def save(self, name, write_transforms=False, **kwargs):
         """Manage folders and save data to disk
@@ -626,6 +629,7 @@ class AudioDataset(Dataset):
         self._sequence_mode = save_dict.get('sequence_mode')
         self._sequence_length = save_dict.get('sequence_length')
         self._sequence_idx = save_dict.get('sequence_idx')
+        self._flattened = save_dict.get('flattened', False)
 
     @classmethod
     def load(cls, filename, root_prefix, drop_dict=False):
@@ -655,6 +659,8 @@ class AudioDataset(Dataset):
         data, meta = parse_audio_file(file, self.sr, len=self.target_length)
         if self._pre_transform is not None:
             data, meta['time'] = self._pre_transform(data, time=meta['time'])
+        if self._flattened is not None:
+            data = torch.stack([d.squeeze(self._flattened) for d in data.split(1, self._flattened)])
         data, meta['time'] = self._transforms(data, time=meta['time'])
         return data, meta
 
@@ -663,9 +669,11 @@ class AudioDataset(Dataset):
             inv_data = self._transforms.invert(data)
         else:
             raise NotInvertibleError
+        if self._flattened is not None:
+            inv_data = torch.stack(list(inv_data), self._flattened)
         if self._pre_transform is not None:
             if self._pre_transform.invertible:
-                inv_data = self._pre_transform.invert(data)
+                inv_data = self._pre_transform.invert(inv_data)
             else:
                 raise NotInvertibleError
         return inv_data

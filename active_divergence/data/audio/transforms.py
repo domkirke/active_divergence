@@ -27,6 +27,9 @@ class AudioTransform(object):
     def __init__(self, sr=44100):
         self.sr = sr
 
+    def __repr_(self):
+        return "AudioTransform()"
+
     def __call__(self, x, time=None, *args, **kwargs):
         if time is None:
             return x
@@ -57,6 +60,9 @@ class ComposeAudioTransform(AudioTransform):
 
     def __init__(self, transforms = [], sr=44100):
         self.transforms = transforms
+
+    def __repr__(self) -> str:
+        return "ComposeAudioTransform(%s)"%[t.__repr__() for t in self.transforms]
 
     def __add__(self, itm):
         if not isinstance(itm, AudioTransform):
@@ -278,7 +284,7 @@ class Normalize(AudioTransform):
             if self.mode == "minmax":
                 self.mean = torch.mean(stats[:,0]); self.max = torch.max(stats[:,1])
             else:
-                self.mean = torch.min(stats[:, 0]);
+                self.mean = torch.min(stats[:, 0])
                 # recompose overall variance from element-wise ones
                 n_elt = torch.Tensor([torch.prod(torch.Tensor(list(x.size()))) for x in data])
                 std_unscaled = ((stats[:,1]**2) / (stats.shape[0]))

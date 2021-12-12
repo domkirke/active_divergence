@@ -31,10 +31,11 @@ def accumulate_traces(traces):
 
 class DissectionMonitor(Callback):
 
-    def __init__(self, n_batches=32, batch_size=1024, monitor_epochs=1):
+    def __init__(self, n_batches=5, batch_size=1024, monitor_epochs=1, embedding_epochs=10):
         self.n_batches = n_batches
         self.batch_size = batch_size
         self.monitor_epochs = monitor_epochs
+        self.embedding_epochs = embedding_epochs
 
     def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
         with torch.no_grad():
@@ -48,7 +49,6 @@ class DissectionMonitor(Callback):
                 trainer.logger.experiment.add_histogram("params/"+k, v, global_step=trainer.current_epoch)
             n_batch = 0
             traces = []
-            graph = False
             for data in trainer.datamodule.train_dataloader(batch_size=self.batch_size):
                 trace_out = trainer.model.trace_from_inputs(data)
                 n_batch += 1
@@ -64,19 +64,16 @@ class DissectionMonitor(Callback):
             for k, v in trace['histograms'].items():
                 trainer.logger.experiment.add_histogram(k, v, global_step = trainer.current_epoch)
 
-            for k, v in trace['embeddings'].items():
-                label_img = None; metadata = None
-                if isinstance(v, dict):
-                    label_img = v['label_img']
-                    metadata = v['metadata']
-                    v = v['data']
-                if len(v.shape) != 2:
-                    v = v.reshape(-1, v.size(-1))
-                for dim in range(v.shape[-1]):
-                    trainer.logger.experiment.add_histogram(k+"_"+str(dim), v[..., dim], global_step=trainer.current_epoch)
-                trainer.logger.experiment.add_embedding(v, tag="latent", label_img=label_img, metadata=metadata, global_step=trainer.current_epoch)
-
-
-
-
+            if trainer.current_epoch % self.embedding_epochs != 0:
+                for k, v in trace['embeddings'].items():
+                    label_img = None; metadata = None
+                    if isinstance(v, dict):
+                        label_img = v['label_img']
+                        metadata = v['metadata']
+                        v = v['data']
+                    if len(v.shape) != 2:
+                        v = v.reshape(-1, v.size(-1))
+                    for dim in range(v.shape[-1]):
+                        trainer.logger.experiment.add_histogram(k+"_"+str(dim), v[..., dim], global_step=trainer.current_epoch)
+                    trainer.logger.experiment.add_embedding(v, tag="latent", label_img=label_img, metadata=metadata, global_step=trainer.current_epoch)
 

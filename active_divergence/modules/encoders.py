@@ -1,7 +1,8 @@
 import sys, pdb
 sys.path.append('../')
 import torch, torch.nn as nn, numpy as np
-from active_divergence.utils import checklist, checktuple, Config, print_stats, checkdist
+from active_divergence.utils import checklist, checktuple, print_stats, checkdist
+from omegaconf import OmegaConf
 import torch.distributions as dist
 from active_divergence.modules import layers as layers, Reshape
 from typing import Tuple, Union
@@ -10,9 +11,9 @@ from typing import Tuple, Union
 class MLPEncoder(nn.Module):
     Layer = layers.MLP
     available_distributions = [dist.Bernoulli, dist.Categorical, dist.Normal]
-    def __init__(self, config: Config, **kwargs):
+    def __init__(self, config: OmegaConf, **kwargs):
         """
-        Feed-forward encoder for auto-encoding architectures. Configuration may include:
+        Feed-forward encoder for auto-encoding architectures. OmegaConfuration may include:
         input_dim : input dimensionality
         nlayers : number of layers (default: 3)
         hidden_dims: hidden dimensions (default: 800)
@@ -21,10 +22,10 @@ class MLPEncoder(nn.Module):
         target_shape: target shape of encoder
         target_dist:  target distribution of encoder
         Args:
-            config (Config): encoder configuration.
+            config (OmegaConf): encoder configuration.
         """
         super(MLPEncoder, self).__init__()
-        self.input_size = checklist(config.input_dim)
+        self.input_size = checktuple(config.input_dim)
         self.nlayers = config.get('nlayers', 3)
         self.hidden_dims = config.get('hidden_dims', 800)
         self.nn_lin = checklist(config.get('nn_lin') or layers.DEFAULT_NNLIN, n=self.nlayers)
@@ -67,7 +68,7 @@ class MLPEncoder(nn.Module):
         Returns:
             y (torch.Tensor or Distribution): encoded data.
         """
-        batch_shape = x.shape[:-len(checklist(self.input_size))]
+        batch_shape = x.shape[:-len(self.input_size)]
         hidden = self.mlp(x.reshape(-1, np.prod(self.input_size)))
         if self.target_dist == dist.Normal:
             out = list(hidden.split(hidden.shape[-1]//2, -1))
@@ -95,7 +96,7 @@ class ConvEncoder(nn.Module):
     Flatten = "MLP"
     def __init__(self, config):
         """
-        Convolutional encoder for auto-encoding architectures. Configuration may include:
+        Convolutional encoder for auto-encoding architectures. OmegaConfuration may include:
         input_dim (Iterable[int]): input dimensionality
         layer (type): convolutional layer (ConvLayer, GatedConvLayer)
         channels (Iterable[int]): sequence of channels
@@ -110,10 +111,10 @@ class ConvEncoder(nn.Module):
         target_shape (Iterable[int]): target shape of encoder
         target_dist: (type) target distribution of encoder
         reshape_method (str): how is convolutional output reshaped (default: 'flatten')
-        flatten_args (Config): keyword arguments for flatten module
+        flatten_args (OmegaConf): keyword arguments for flatten module
 
         Args:
-            config (Config): encoder configuration.
+            config (OmegaConf): encoder configuration.
         """
         super(ConvEncoder, self).__init__()
         # convolutional parameters
@@ -234,9 +235,9 @@ class MLPDecoder(MLPEncoder):
 class DeconvEncoder(nn.Module):
     Layer = layers.DeconvLayer
     Flatten = "MLP"
-    def __init__(self, config: Config, encoder: nn.Module = None):
+    def __init__(self, config: OmegaConf, encoder: nn.Module = None):
         """
-        Convolutional encoder for auto-encoding architectures. Configuration may include:
+        Convolutional encoder for auto-encoding architectures. OmegaConfuration may include:
         input_dim (Iterable[int]): input dimensionality
         layer (type): convolutional layer (ConvLayer, GatedConvLayer)
         channels (Iterable[int]): sequence of channels
@@ -251,10 +252,10 @@ class DeconvEncoder(nn.Module):
         target_shape (Iterable[int]): target shape of encoder
         target_dist: (type) target distribution of encoder
         reshape_method (str): how is convolutional output reshaped (flatten or reshape, default: 'flatten')
-        flatten_args (Config): keyword arguments for flatten module
+        flatten_args (OmegaConf): keyword arguments for flatten module
 
         Args:
-            config (Config): decoder configuration.
+            config (OmegaConf): decoder configuration.
             encoder (nn.Module): corresponding encoder
         """
         super(DeconvEncoder, self).__init__()
