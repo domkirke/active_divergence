@@ -73,7 +73,5 @@ class DissectionMonitor(Callback):
                         v = v['data']
                     if len(v.shape) != 2:
                         v = v.reshape(-1, v.size(-1))
-                    for dim in range(v.shape[-1]):
-                        trainer.logger.experiment.add_histogram(k+"_"+str(dim), v[..., dim], global_step=trainer.current_epoch)
                     trainer.logger.experiment.add_embedding(v, tag="latent", label_img=label_img, metadata=metadata, global_step=trainer.current_epoch)
 

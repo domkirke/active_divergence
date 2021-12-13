@@ -145,6 +145,7 @@ class AutoEncoder(pl.LightningModule):
         trace = {}
         reconstructions, z_params, z = self.full_forward(x.to(self.device), trace=trace)
         full_trace = {'embeddings':{'latent':z_params.mean},
-                      'histograms':{'latent_std': z_params.stddev}}
+                      'histograms':{**{'latent_std/dim_%i'%i: z_params.stddev[..., i] for i in range(z_params.stddev.shape[-1])},
+                                    **{'latent/dim_%i'%i: z_params.mean[..., i] for i in range(z_params.mean.shape[-1])}}}
         return full_trace
 

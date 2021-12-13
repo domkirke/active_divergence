@@ -77,7 +77,7 @@ class MLPEncoder(nn.Module):
                 out[1] = torch.clamp(out[1].reshape(*batch_shape, *checktuple(self.target_shape)), -5)
             if not self.out_nnlin is None:
                 out[0] = self.out_nnlin(out[0])
-            out = dist.Normal(out[0], torch.exp(out[1]).sqrt())
+            out = dist.Normal(out[0], torch.exp(out[1]))
         elif self.target_dist in [dist.Bernoulli]:
             if self.target_shape:
                 hidden = hidden.reshape(*batch_shape, *checktuple(self.target_shape))
@@ -217,13 +217,10 @@ class ConvEncoder(nn.Module):
                 out = out[:, -1]
             elif self.aggregate == "mean":
                 out = out.mean(1)
-            if self.target_dist == dist.Normal:
-                mu, std = out.split(out.shape[-1]//2, dim=-1)
-                out = dist.Normal(mu, torch.sigmoid(std))
-        else:
-            if self.target_dist == dist.Normal:
-                mu, std = out.split(out.shape[1]//2, dim=1)
-                out = dist.Normal(mu, torch.sigmoid(std))
+        if self.target_dist == dist.Normal:
+            mu, std = out.split(out.shape[-1]//2, dim=-1)
+            std = std.clamp(-4).exp().sqrt()
+            out = dist.Normal(mu, std)
 
         return out
 
