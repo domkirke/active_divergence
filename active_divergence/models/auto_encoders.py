@@ -53,7 +53,7 @@ class AutoEncoder(pl.LightningModule):
         return next(self.parameters()).device
 
     def configure_optimizers(self):
-        optimizer = torch.optim.SGD(self.parameters(), lr=self.config.training.lr or 1e-3)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.config.training.lr or 1e-3)
         return optimizer
 
     def encode(self, x):
@@ -118,19 +118,12 @@ class AutoEncoder(pl.LightningModule):
         embedding = self.encoder(x)
         return embedding
 
-    def reconstruct(self, x, *args, sample_latent=False, sample_data=False, only_data=False, **kwargs):
+    def reconstruct(self, x, *args, sample_latent=False, sample_data=False, **kwargs):
         if isinstance(x, (tuple, list)):
             x, y = x
         x_out, _, _ = self.full_forward(x.to(self.device), sample=sample_latent)
         if sample_data and isinstance(x_out, dist.Distribution):
             x_out = [x_out.sample()]
-        elif isinstance(x_out, dist.Normal):
-            x_out = [x_out.mean, x_out.stddev]
-        elif isinstance(x_out, dist.Distribution):
-            x_out = [x_out.mean]
-        #TODO baaah
-        if only_data:
-            x_out = x_out[1]
         return x, x_out
 
     def sample_from_prior(self, n_samples=1, temperature=1.0, sample=False):

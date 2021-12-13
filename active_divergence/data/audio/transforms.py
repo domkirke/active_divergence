@@ -1495,12 +1495,19 @@ class Unsqueeze(AudioTransform):
     def __call__(self, x, time=None, sr=None, **kwargs):
         if isinstance(x, list):
             return apply_transform_to_list(self, x, time=time, sr=sr)
-        return x.unsqueeze(self.dim), time
+        if time is None:
+            return x.unsqueeze(self.dim)
+        else:
+            return x.unsqueeze(self.dim), time
 
     def invert(self, x, *args, time=None, sr=None, **kwargs):
         if isinstance(x, list):
-            return apply_transform_to_list(self, x, time=time, sr=sr)
-        return x.squeeze(self.dim), time
+            return apply_inver_transform_to_list(self, x, time=time, sr=sr)
+        if time is None:
+            return x.squeeze(self.dim)
+        else:
+            return x.squeeze(self.dim), time
+        
 
 class Transpose(AudioTransform):
     invertible = True
@@ -1524,7 +1531,10 @@ class Transpose(AudioTransform):
         data = x.transpose(*self.dims)
         if self.contiguous:
             data = data.contiguous()
-        return data, time
+        if time is None:
+            return data
+        else:
+            return data, time
 
     def invert(self, x, **kwargs):
         return self(x, **kwargs)

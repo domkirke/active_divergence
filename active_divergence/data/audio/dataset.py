@@ -664,7 +664,7 @@ class AudioDataset(Dataset):
         data, meta['time'] = self._transforms(data, time=meta['time'])
         return data, meta
 
-    def invert_data(self, data):
+    def invert_transform(self, data):
         if self._transforms.invertible:
             inv_data = self._transforms.invert(data)
         else:

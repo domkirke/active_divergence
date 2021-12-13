@@ -33,8 +33,8 @@ class ImgReconstructionMonitor(Callback):
         for f in files:
             data, meta = dataset.transform_file(f"{dataset.root_directory}/{f}")
             original, generation = model.reconstruct(data)
-            originals.append(dataset.invert_data(original))
-            generations.append(dataset.invert_data(generation))
+            originals.append(dataset.invert_transform(original))
+            generations.append(dataset.invert_transform(generation))
         originals, generations = torch.cat(originals, -1).squeeze(), torch.cat(generations, -1).squeeze()
         #pdb.set_trace()
         return check_mono(originals, normalize=True), check_mono(generations, normalize=True)
@@ -79,7 +79,8 @@ def check_mono(sgl, normalize=True):
 class AudioReconstructionMonitor(Callback):
 
     def __init__(self, n_reconstructions=5, n_morphings=5, n_samples=5, n_files=1,
-                 temperature_range=None, monitor_epochs=1, reconstruction_epochs=5):
+                 temperature_range=None, monitor_epochs=1, reconstruction_epochs=5,
+                 sample_reconstruction=False):
         self.n_reconstructions = n_reconstructions
         self.n_samples = n_samples
         self.temperature_range = temperature_range or [0.01, 0.1, 1.0, 3.0, 5.0, 10.0]
@@ -87,39 +88,44 @@ class AudioReconstructionMonitor(Callback):
         self.n_morphings = n_morphings
         self.monitor_epochs = monitor_epochs
         self.reconstruction_epochs = reconstruction_epochs
+        self.sample_reconstruction = sample_reconstruction
 
     def plot_reconstructions(self, model, loader):
         data = next(loader(batch_size=self.n_reconstructions).__iter__())
         x_original, x_out = model.reconstruct(data)
-        x_original.squeeze()
-        x_out = [x.squeeze().cpu() for x in x_out]
+        x_original = x_original.squeeze()
         fig, ax = plt.subplots(len(x_original), 1)
         for i in range(len(x_original)):
             ax[i].plot(x_original[i], linewidth=1)
-            for j in reversed(range(len(x_out))):
-                ax[i].plot(x_out[j][i], linewidth=0.6)
+            if isinstance(x_out, dist.Normal):
+                mean = x_out.mean[i].squeeze().cpu(); std = x_out.mean[i].squeeze().cpu()
+                ax[i].plot(mean, linewidth=0.5)
+                ax[i].fill_between(mean-std, mean+std, alpha=0.4)
+            else:
+                ax[i].plot(x_out[i].squeeze().cpu())
         return fig
 
     def plot_samples(self, model):
         out = model.sample_from_prior(n_samples=self.n_samples, temperature=self.temperature_range)
         if isinstance(out, dist.Distribution):
             out = out.mean
-        out = out.cpu()
         fig, ax = plt.subplots(self.n_samples, len(self.temperature_range))
         for i in range(self.n_samples):
             for j in range(len(self.temperature_range)):
-                ax[i, j].plot(out[i, j])
+                ax[i, j].plot(out[i, j].squeeze().cpu())
         return fig
 
     def reconstruct_file(self, model, files, dataset):
         originals = []; generations = []
         for f in files:
             data, meta = dataset.transform_file(f"{dataset.root_directory}/{f}")
-            original, generation = model.reconstruct(data, only_data=True)
+            original, generation = model.reconstruct(data) 
             original = original.cpu()
+            if isinstance(generation, dist.Normal):
+                generation = generation.sample() if self.sample_reconstruction else generation.mean
             generation = generation.cpu()
-            originals.append(dataset.invert_data(original))
-            generations.append(dataset.invert_data(generation))
+            originals.append(dataset.invert_transform(original))
+            generations.append(dataset.invert_transform(generation))
         originals, generations = torch.cat(originals, -1).squeeze(), torch.cat(generations, -1).squeeze()
         #pdb.set_trace()
         return check_mono(originals, normalize=True), check_mono(generations, normalize=True)

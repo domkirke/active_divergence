@@ -74,7 +74,7 @@ class MLPEncoder(nn.Module):
             out = list(hidden.split(hidden.shape[-1]//2, -1))
             if self.target_shape:
                 out[0] = out[0].reshape(*batch_shape, *checktuple(self.target_shape))
-                out[1] = torch.clamp(out[1].reshape(*batch_shape, *checktuple(self.target_shape)), -4)
+                out[1] = torch.clamp(out[1].reshape(*batch_shape, *checktuple(self.target_shape)), -5)
             if not self.out_nnlin is None:
                 out[0] = self.out_nnlin(out[0])
             out = dist.Normal(out[0], torch.exp(out[1]).sqrt())
@@ -121,36 +121,36 @@ class ConvEncoder(nn.Module):
         self.input_size = config.input_dim
         if self.input_size is None:
             print('[Warning] : input dimension not known, may lead to degenerated dimensions')
-        self.channels = ([config.input_dim[0]] or [1]) + config.channels
+        self.channels = ([config.input_dim[0]] or [1]) + checklist(config.channels)
         self.n_layers = len(self.channels) - 1
-        self.kernel_size = checklist(config.kernel_size or 7, n=self.n_layers)
-        self.dilation = checklist(config.dilation or 1, n=self.n_layers)
-        self.padding = checklist(config.padding, n=self.n_layers)
-        self.dropout = checklist(config.dropout, n=self.n_layers)
-        self.stride = checklist(config.stride, n=self.n_layers)
-        self.dim = config.dim or len(config.input_dim or [None]*3) - 1
-        self.nn_lin = checklist(config.nn_lin, n=self.n_layers)
-        if config.layer is not None:
+        self.kernel_size = checklist(config.get('kernel_size', 7), n=self.n_layers)
+        self.dilation = checklist(config.get('dilation', 1), n=self.n_layers)
+        self.padding = checklist(config.get('padding'), n=self.n_layers)
+        self.dropout = checklist(config.get('dropout'), n=self.n_layers)
+        self.stride = checklist(config.get('stride',1), n=self.n_layers)
+        self.dim = config.get('dim', len(config.get('input_dim', [None]*3)) - 1)
+        self.nn_lin = checklist(config.get('nn_lin'), n=self.n_layers)
+        if config.get('layer') is not None:
             self.Layer = getattr(layers, config.layer)
-        self.config_flatten = {} if config.flatten_args is None else config.flatten_args.dict()
-        self.flatten_type = getattr(layers, config.flatten_module or self.Flatten)
-        self.norm = checklist(config.norm, n=self.n_layers)
-        self.bias = config.bias if config.bias is not None else True
+        self.config_flatten = dict(config.get('flatten_args', {}))
+        self.flatten_type = getattr(layers, config.get('flatten_module', self.Flatten))
+        self.norm = checklist(config.get('norm'), n=self.n_layers)
+        self.bias = config.get('bias', True)
 
 
         # flattening parameters
-        self.target_shape = config.target_shape
-        self.target_dist = config.target_dist
+        self.target_shape = config.get('target_shape')
+        self.target_dist = config.get('target_dist')
         if self.target_dist:
             self.target_dist = checkdist(self.target_dist)
-        self.reshape_method = config.reshape_method or "flatten"
+        self.reshape_method = config.get('reshape_method', "flatten")
         if self.target_dist and not self.target_shape:
             if isinstance(self.target_dist, dist.Normal):
                 self.channels[-1] *= 2
 
         # init modules
         # self.Flatten = self.Flatten if config.flatten is None else getattr(layers, config.flatten)
-        self.aggregate = config.aggregate
+        self.aggregate = config.get('aggregate')
         self._init_modules()
 
     def _init_conv_modules(self):
@@ -263,43 +263,46 @@ class DeconvEncoder(nn.Module):
         if encoder is not None:
             self.__dict__['encoder'] = encoder
         # convolutional parameters
-        self.input_size = config.input_dim
+        self.input_size = config.get('input_dim')
         if self.input_size is None:
             print('[Warning] : input dimension not known, may lead to degenerated dimensions')
-        self.target_shape = config.target_shape
+        self.target_shape = config.get('target_shape')
         if self.target_shape:
             self.out_channels = self.target_shape[0]
         else:
-            self.out_channels = config.out_channels
-        self.target_dist = config.target_dist
+            self.out_channels = config.get('out_channels')
+        self.target_dist = config.get('target_dist')
         if self.target_dist:
             self.target_dist = checkdist(self.target_dist)
             self.out_channels = self.get_channels_from_dist(self.out_channels or 1)
 
-        self.channels = list(reversed(config.channels)) + checklist(self.out_channels)
+        self.channels = list(reversed(config.get('channels'))) + checklist(self.out_channels)
         self.n_layers = len(self.channels) - 1
-        self.kernel_size = list(reversed(checklist(config.kernel_size or 7, n=self.n_layers)))
-        self.dilation = list(reversed(checklist(config.dilation or 1, n=self.n_layers)))
-        if config.padding is None:
+        self.kernel_size = list(reversed(checklist(config.get('kernel_size', 7), n=self.n_layers)))
+        self.dilation = list(reversed(checklist(config.get('dilation', 1), n=self.n_layers)))
+        if config.get('padding') is None:
             self.padding = [int(np.ceil(k/2)) for k in self.kernel_size]
         else:
-            self.padding = list(reversed(checklist(config.padding, n=self.n_layers)))
-        self.dropout = list(reversed(checklist(config.dropout, n=self.n_layers)))
-        self.stride = list(reversed(checklist(config.stride, n=self.n_layers)))
-        self.dim = config.dim or len(config.target_shape or [None] * 3) - 1
+            self.padding = list(reversed(checklist(config.get('padding'), n=self.n_layers)))
+        self.dropout = list(reversed(checklist(config.get('dropout'), n=self.n_layers)))
+        self.stride = list(reversed(checklist(config.get('stride', 1), n=self.n_layers)))
+        self.dim = config.get('dim') or len(self.target_shape or [None] * 3) - 1
         self.output_padding = [np.array(0,)]*self.n_layers
-        self.nn_lin = list(reversed(checklist(config.dict().get('nn_lin', layers.DEFAULT_NNLIN), n=self.n_layers)))
-        self.norm = list(reversed(checklist(config.norm, n=self.n_layers)))
-        self.bias = config.bias if config.bias is not None else True
-        if config.layer is not None:
+        self.nn_lin = list(reversed(checklist(config.get('nn_lin', layers.DEFAULT_NNLIN), n=self.n_layers)))
+        self.out_nnlin = config.get('out_nnlin')
+        if self.out_nnlin is not None:
+            self.out_nnlin = getattr(nn, self.out_nnlin)()
+        self.norm = list(reversed(checklist(config.get('norm'), n=self.n_layers)))
+        self.bias = config.get('bias',True)
+        if config.get('layer') is not None:
             self.Layer = getattr(layers, config.layer)
 
         # flattening parameters
-        self.reshape_method = config.reshape_method or "flatten"
-        self.config_flatten = {} if config.flatten_args is None else config.flatten_args.dict()
-        self.flatten_type = getattr(layers, config.flatten_module or self.Flatten)
+        self.reshape_method = config.get('reshape_method') or "flatten"
+        self.config_flatten = dict(config.get('flatten_args', {}))
+        self.flatten_type = getattr(layers, config.get('flatten_module') or self.Flatten)
 
-        self.aggregate = config.aggregate
+        self.aggregate = config.get('aggregate')
         # init modules
         self._init_modules()
 
@@ -394,13 +397,17 @@ class DeconvEncoder(nn.Module):
         out = out.view(*batch_shape, *out.shape[-(self.dim+1):])
         if issubclass(self.target_dist, dist.Normal):
             mu, std = out.split(out.shape[1] // 2, dim=1)
-            out = dist.Normal(mu, torch.sigmoid(std))
+            if self.out_nnlin is not None:
+                mu = self.out_nnlin(mu)
+            out = dist.Normal(mu, std.clamp(-4).exp().sqrt())
         elif issubclass(self.target_dist, dist.Bernoulli):
+            if self.out_nnlin is not None:
+                out = self.out_nnlin(out)
             out = dist.Bernoulli(torch.sigmoid(out))
         elif issubclass(self.target_dist, dist.Categorical):
+            if self.out_nnlin is not None:
+                out = self.out_nnlin(out)
             out = dist.Categorical(probs=torch.softmax(out, dim=-1))
-        elif hasattr(self.target_dist, "is_midi_like"):
-            out = self.target_dist(out)
         return out
 
 

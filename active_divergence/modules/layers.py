@@ -605,8 +605,7 @@ class DeconvLayer(ConvLayer):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Performs convolution."""
-        out = self.module(x)
-        return out
+        return super(DeconvLayer, self).forward(x)
 
 
 gated_conv_hash = {1: GatedConv1d, 2:GatedConv2d, 3:GatedConv3d}

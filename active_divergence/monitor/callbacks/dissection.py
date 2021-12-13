@@ -64,7 +64,7 @@ class DissectionMonitor(Callback):
             for k, v in trace['histograms'].items():
                 trainer.logger.experiment.add_histogram(k, v, global_step = trainer.current_epoch)
 
-            if trainer.current_epoch % self.embedding_epochs != 0:
+            if trainer.current_epoch % self.embedding_epochs == 0:
                 for k, v in trace['embeddings'].items():
                     label_img = None; metadata = None
                     if isinstance(v, dict):
