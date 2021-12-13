@@ -2,13 +2,15 @@ import os, sys, pdb
 from typing import Type
 sys.path.append('..')
 from active_divergence.data.audio import AudioDataset
-from active_divergence.data.audio import transforms
+from active_divergence.data.audio import transforms, augmentations
 from active_divergence.utils import Config, checklist
 from torch.utils.data import random_split, DataLoader
 from torchvision.datasets import MNIST
 from pytorch_lightning import LightningDataModule
 
 def parse_transforms(transform_list):
+    if transform_list is None:
+        return transforms.AudioTransform()
     transform_list = checklist(transform_list)
     current_transforms = []
     for t in transform_list:
@@ -19,12 +21,23 @@ def parse_transforms(transform_list):
     else:
         return current_transforms[0]
 
+def parse_augmentations(augmentation_list):
+    if augmentation_list is None:
+        return []
+    augmentation_list = checklist(augmentation_list)
+    current_augmentations = []
+    for t in augmentation_list:
+        augmentation_tmp = getattr(augmentations, t['type'])(**t.get('args', {}))
+        current_augmentations.append(augmentation_tmp)
+    return current_augmentations
+
 class AudioDataModule(LightningDataModule):
     def __init__(self, config, **kwargs):
         super().__init__()
         self.dataset = None
         self.dataset_args = dict(config.dataset)
-        self.transform_args = config.transforms
+        self.transform_args = config.get('transforms', {})
+        self.augmentation_args = config.get('augmentations', {})
         self.loader_args = config.get('loader', {})
         self.partition_balance = config.get('partition_balance', [0.8, 0.2])
         self.dataset = None
@@ -33,7 +46,7 @@ class AudioDataModule(LightningDataModule):
         self.test_dataset = None
         self.import_datasets()
 
-    def load_dataset(self, dataset_args, transform_args, make_partitions=False):
+    def load_dataset(self, dataset_args, transform_args, augmentation_args, make_partitions=False):
         dataset = AudioDataset(**dataset_args)
         if transform_args:
             name = transform_args.name
@@ -50,7 +63,7 @@ class AudioDataModule(LightningDataModule):
         if dataset_args.get('flatten') is not None:
             dataset.flatten_data(int(dataset_args['flatten']))
         # import and scale transform
-        current_transforms = parse_transforms(transform_args.transforms or transforms.AudioTransform())
+        current_transforms = parse_transforms(transform_args.get('transforms'))
         if dataset_args.get('scale') is not None and current_transforms.needs_scaling:
             try: 
                 scale = int(dataset_args.get('scale'))
@@ -58,6 +71,9 @@ class AudioDataModule(LightningDataModule):
                 scale = bool(dataset_args.get('scale'))
             dataset.scale_amount = scale
         dataset.transforms = current_transforms
+        # import augmentations
+        current_augmentations = parse_augmentations(augmentation_args)
+        dataset.augmentations = current_augmentations
         # set partitions
         if make_partitions:
             dataset.make_partitions(['train', 'valid'], self.partition_balance)
@@ -70,7 +86,7 @@ class AudioDataModule(LightningDataModule):
 
     def import_datasets(self, stage = None):
         # transforms
-        self.dataset = self.load_dataset(self.dataset_args, self.transform_args, make_partitions=True)
+        self.dataset = self.load_dataset(self.dataset_args, self.transform_args, self.augmentation_args, make_partitions=True)
         self.train_dataset = self.dataset.retrieve('train')
         self.valid_dataset = self.dataset.retrieve('valid')
 

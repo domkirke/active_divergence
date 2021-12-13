@@ -1,0 +1,17 @@
+tqdm
+einops
+librosa
+omegaconf
+matplotlib
+numpy
+pytest
+pytorch_lightning
+scikit_learn
+scipy
+termcolor
+torch
+torchvision
+torchaudio
+tensorboard
+GPUtil
+git+https://github.com/caillonantoine/cached_conv.git#egg=cached_conv

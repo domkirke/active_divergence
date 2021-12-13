@@ -32,7 +32,7 @@ model_type = getattr(models, config.model.type)
 config.model.input_dim = data.shape
 
 if args.checkpoint is None:
-    model = model_type(**dict(config.model), data=data)
+    model = model_type(**dict(config.model))
     save_config(config, save_path, config_save.name)
 else:
     # config = Config(f"{os.path.dirname(args.checkpoint)}/{os.path.splitext(os.path.basename(args.checkpoint))[0]}.yaml")

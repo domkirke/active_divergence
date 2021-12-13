@@ -1,24 +1,24 @@
-import torch, torchaudio, abc, numpy as np, librosa, re, scipy, pdb, math
+import torch, torchaudio, abc, numpy as np, librosa, re, scipy, pdb, math, random
 import sys; sys.path.append('../')
 from active_divergence.utils import *
 from scipy.fft import dct, dst, idct, idst
 from mdct import mdct, mdst, imdct, imdst
 from scipy.interpolate import interp1d
 from nsgt import NSGT as NNSGT, LogScale, LinScale, MelScale, OctScale
-
-
 try:
     from tifresi.stft import GaussTF, GaussTruncTF
     from tifresi.utils import preprocess_signal
     TIFRESI_AVAILABLE = True
 except ImportError:
     TIFRESI_AVAILABLE = False
-
 from torchaudio import transforms as ta_transforms
 
 
 class NotInvertibleError(Exception):
     pass
+
+
+## MAIN CLASS
 
 class AudioTransform(object):
     invertible = True
@@ -46,6 +46,8 @@ class AudioTransform(object):
         else:
             return x, time
 
+## CONTAINERS
+
 class ComposeAudioTransform(AudioTransform):
     @property
     def invertible(self):
@@ -62,7 +64,7 @@ class ComposeAudioTransform(AudioTransform):
         self.transforms = transforms
 
     def __repr__(self) -> str:
-        return "ComposeAudioTransform(%s)"%[t.__repr__() for t in self.transforms]
+        return "ComposeAudioTransform(%s)"%[t.__repr__()+"\n" for t in self.transforms]
 
     def __add__(self, itm):
         if not isinstance(itm, AudioTransform):
@@ -105,7 +107,7 @@ class ComposeAudioTransform(AudioTransform):
         return x
 
 
-## UTILITY
+## HELPER FUNCTIONS
 
 def apply_transform_to_list(transform, data, time=None, **kwargs):
     if time is None:
@@ -133,6 +135,9 @@ class Mono(AudioTransform):
         self.squeeze = squeeze
         self.dim = dim
         self.invert_as_stereo = invert_as_stereo
+
+    def __repr__(self):
+        return "Mono(mode=%s, squeeze=%s, normalize=%s, dim=%s, invert_as_stereo=%s)"%(self.mode, self.squeeze, self.normalize, self.dim, self.invert_as_stereo)
 
     def __call__(self, x, *args, time=None, **kwargs):
         if isinstance(x, list):
@@ -164,6 +169,9 @@ class Mono(AudioTransform):
 class Stereo(AudioTransform):
     def __init__(self, normalize=False, sr=44100):
         self.normalize = normalize
+
+    def __repr__(self):
+        return "Stereo(normalize: %s)"%self.normalize
 
     def __call__(self, x, *args, time=None, **kwargs):
         if isinstance(x, list):
@@ -199,6 +207,9 @@ class Window(AudioTransform):
         self.split_time = split_time
         self.pad = pad
         self.inversion = inversion
+
+    def __repr__(self):
+        return f"Window(ws={self.window_size}, hs={self.hop_size}, dim={self.dim}, pad={self.pad}, inversion={self.inversion})"
 
     def _apply_pad(self, chunks):
         if self.pad:
@@ -258,6 +269,9 @@ class Normalize(AudioTransform):
         self.polarity = scale or "bipolar"
         self.mean = None
         self.max = None
+
+    def __repr__(self):
+        return f"Normalize(mode={self.mode}, scale={self.scale})"
 
     @property
     def needs_scaling(self):
@@ -359,6 +373,16 @@ class STFT(AudioTransform):
         if self.backend == "torch":
             self.griffin_lim = torchaudio.transforms.GriffinLim(self.nfft, win_length=self.win_size,
                                                                 hop_length=self.hop_size, power=1.0)
+
+    def __repr__(self):
+        repr = f"STFT(nfft={self.nfft}, hop_size={self.hop_size}"
+        if self.win_size != self.nfft:
+            repr += f", {self.window_size}"
+        repr += f', sr={self.sr}'
+        if self.hps:
+            repr += f", hps_margin{self.hps_margin}, hps_power={self.hps_power}"
+        repr += f", backend={self.backend})"
+        return repr
 
     def __call__(self, x, *args, time=None, **kwargs):
         if isinstance(x, list):

@@ -3,6 +3,7 @@ from tqdm import tqdm
 sys.path.append('../')
 sys.path.append('../../')
 from active_divergence.data.audio.transforms import AudioTransform, NotInvertibleError
+from active_divergence.data.audio.augmentations import AudioAugmentation
 from active_divergence.data.audio.metadata import *
 from active_divergence.utils import checklist, checktensor, checknumpy, ContinuousList
 import torch, torchaudio, os, dill, re, numpy as np, matplotlib.pyplot as plt, random, copy, lardon, numbers, math
@@ -10,7 +11,7 @@ from tqdm import tqdm
 from torch.utils.data import Dataset, BatchSampler
 from torch.nn.utils import rnn
 
-def parse_audio_file(f, sr=None, len=None, mix=True):
+def parse_audio_file(f, sr=None, len=None, bitrate=None):
     x, f_sr = torchaudio.load(f)
     if len is not None:
         if isinstance(len, float):
@@ -20,6 +21,10 @@ def parse_audio_file(f, sr=None, len=None, mix=True):
             x = x[..., :len]
     if f_sr != sr:
         x = torchaudio.transforms.Resample(f_sr, sr)(x)
+    if bitrate is not None:
+        current_bitrate = torchaudio.info(f).bits_per_sample
+        if current_bitrate != bitrate:
+            x = torchaudio.functional.apply_codec(x, sr, format="wav", bits_per_sample=16)
     return x, {'time':torch.Tensor([0.0]), 'sr':sr or f_sr}
 
 def parse_folder(d, valid_exts):
@@ -103,6 +108,22 @@ class AudioDataset(Dataset):
         self._transforms = AudioTransform()
     transforms = property(_gettransform, _settransform, _deltransform)
 
+    def _setaugmentation(self, augmentations):
+        augmentations = checklist(augmentations)
+        assert len(list(filter(lambda x: not isinstance(x, AudioAugmentation), augmentations))) == 0
+        for a in augmentations:
+            if self.sr is not None:
+                a.sr = self.sr
+            if self.bitrate is not None:
+                a.bitrate = self.bitrate
+        self._augmentations = augmentations
+        self.augment = True
+    def _getaugmentation(self):
+        return self._augmentations
+    def _delaugmentation(self):
+        self.augmentations = []
+    augmentations = property(_getaugmentation, _setaugmentation, _delaugmentation)
+
     def _setactivetasks(self, active_tasks):
         active_tasks = checklist(active_tasks)
         for a in active_tasks:
@@ -114,7 +135,9 @@ class AudioDataset(Dataset):
         self._active_tasks = []
     active_tasks = property(_getactivetasks, _setactivetasks, _delactivetasks)
 
-    def __init__(self, root, sr=None, transforms=AudioTransform(), target_length=None, target_transforms=None, drop_time=False, active_tasks = [], **kwargs):
+    def __init__(self, root, sr=None, bitrate=16, target_length=None,
+                 transforms=AudioTransform(),  target_transforms=None,
+                 augmentations=[], active_tasks = [], **kwargs):
         """
         Args:
             root (string): root folder
@@ -133,6 +156,7 @@ class AudioDataset(Dataset):
         self.metadata = {}
         self.classes = {}
         self.sr = sr or 44100
+        self.bitrate = bitrate or 16
         self.partitions = {}
         self.partition_files = None
         self.parse_files()
@@ -140,6 +164,8 @@ class AudioDataset(Dataset):
         # data attributes
         self._pre_transform = AudioTransform()
         self.transforms = transforms
+        self.augmentations = augmentations
+        self.augment = len(self.augmentations) > 0
         self._drop_time = False
         self.scale_amount = kwargs.get('scale_amount', self.scale_amount)
         self._flattened = None 
@@ -173,29 +199,33 @@ class AudioDataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, item, **kwargs):
-        # retrieve data
+        # retrieve indices
         if isinstance(item, slice):
             item = list(range(len(self)))[item]
-
+        # retrieve data
         if hasattr(item, "__iter__"):
             data = [self._get_item(i, **kwargs) for i in item]
             data, seq_idx = [d[0] for d in data], [d[1] for d in data]
         else:
             data, seq_idx = self._get_item(item, **kwargs)
-
+        # retrieve metadata
         metadata = self._get_item_metadata(item, seq=seq_idx)
-
+        # transform data
         if self._transforms is not None:
             data = self._transforms(data, time=metadata.get('time'))
             if metadata.get('time') is not None:
                 data, time = data
-
+        # augment data
+        augment = kwargs.get('augment', self.augment)
+        if len(self.augmentations) > 0 and augment:
+            for a in self.augmentations:
+                data, metadata = a(data, metadata)
+        # collate data
         if isinstance(data, list):
             try:
                 data = collate_out(data)
             except RuntimeError:
                 print('[Warning] Data could not be stacked with indexes %s'%item)
-
         return data, metadata
 
 
@@ -223,7 +253,6 @@ class AudioDataset(Dataset):
             else:
                 data = self.data[item].__getitem__(tuple(idx))
         else:
-            ndim = None
             if self.data.ndim is None:
                 ndim = len(self.data.entries[item].shape)
             else:
@@ -245,6 +274,12 @@ class AudioDataset(Dataset):
         return data, seq_idx
 
     def _get_item_metadata(self, item: int, seq=None):
+        def get_time(metadata, seq):
+            if seq > 0 and metadata.ndim == 1:
+                return metadata + seq / self.sr
+            else:
+                return metadata[seq]
+
         if hasattr(item, "__iter__"):
             metadatas = [self._get_item_metadata(item[i], seq[i]) for i in range(len(item))]
             compiled_metadata = {}
@@ -254,12 +289,11 @@ class AudioDataset(Dataset):
                 except:
                     compiled_metadata[k] = [m[k] for m in metadatas]
             return compiled_metadata
-                
         seq = seq if seq is not None else slice(None)
         if hasattr(seq, "__iter__"):
-            metadata = {'time': torch.Tensor([self.metadata['time'][item][s] for s in seq])}
+            metadata = {'time': torch.Tensor([get_time(self.metadata['time'][item], s) for s in seq])}
         else:
-            metadata = {'time': torch.tensor([self.metadata['time'][item][seq]])}
+            metadata = {'time': torch.tensor([get_time(self.metadata['time'][item], seq)])}
         for k in self._active_tasks+['sr']:
             current_meta = self.metadata[k][item]
             if isinstance(current_meta, ContinuousList):
@@ -580,6 +614,8 @@ class AudioDataset(Dataset):
         """
         return {'files':self.files,
                 'hash':self.hash,
+                'sr': self.sr,
+                'bitrate': self.bitrate,
                 'transforms':self._transforms,
                 'root_directory':self.root_directory,
                 'partitions':self.partitions,
@@ -621,6 +657,8 @@ class AudioDataset(Dataset):
             self.data = save_dict.get('data')
         if save_dict.get('metadata'):
             self.metadata = save_dict.get('metadata')
+        self.sr = save_dict.get('sr')
+        self.bitrate = save_dict.get('bitrate')
         self.target_length = save_dict.get('target_length')
         self.partitions = save_dict.get('partitions', {})
         self.partition_files = save_dict.get('partition_files')
@@ -656,7 +694,7 @@ class AudioDataset(Dataset):
             return dataset
 
     def transform_file(self, file):
-        data, meta = parse_audio_file(file, self.sr, len=self.target_length)
+        data, meta = parse_audio_file(file, self.sr, len=self.target_length, bitrate=self.bitrate)
         if self._pre_transform is not None:
             data, meta['time'] = self._pre_transform(data, time=meta['time'])
         if self._flattened is not None:
