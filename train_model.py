@@ -38,13 +38,10 @@ else:
     # config = Config(f"{os.path.dirname(args.checkpoint)}/{os.path.splitext(os.path.basename(args.checkpoint))[0]}.yaml")
     model = model_type.load_from_checkpoint(args.checkpoint)
 
-"""
-pdb.set_trace()
+
 f = data.dataset.root_directory + "/" + data.dataset.files[0]
 x, y = data.dataset.transform_file(f)
-model(x)
 x_inv = data.dataset.invert_transform(x)
-"""
 
 # Configure callbacks
 callbacks = get_callbacks(config.get('callbacks'))

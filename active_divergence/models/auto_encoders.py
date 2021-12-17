@@ -20,7 +20,7 @@ class AutoEncoder(pl.LightningModule):
         # architecture
         config.encoder = config.get('encoder') or encoder
         config.encoder.args = config.encoder.get('args', {})
-        config.encoder['args']['input_dim'] = config.input_dim
+        config.encoder['args']['input_dim'] = config.get('input_dim') or kwargs.get('input_dim')
         config.encoder['args']['target_shape'] = config.latent.dim
         config.encoder['args']['target_dist'] = config.latent.dist
         encoder_type = config.encoder.type or "MLPEncoder"
@@ -28,7 +28,7 @@ class AutoEncoder(pl.LightningModule):
         config.decoder = config.get('decoder', decoder)
         config.decoder.args = config.decoder.get('args', {})
         config.decoder.args.input_dim = config.latent.dim
-        config.decoder.args.target_shape = config.input_dim
+        config.decoder.args.target_shape = config.get('input_dim') or kwargs.get('input_dim')
         decoder_type = config.decoder.type or "MLPDecoder"
         self.decoder = getattr(encoders, decoder_type)(config.decoder.args)
 
@@ -97,7 +97,6 @@ class AutoEncoder(pl.LightningModule):
         # training_step defined the train loop.
         x, z_params, z = self.full_forward(batch, batch_idx)
         loss, (rec_loss, reg_loss) = self.loss(batch, x, z_params, z, epoch=self.trainer.current_epoch)
-        loss = nn.functional.mse_loss(x.mean, batch)
         self.log("rec_loss/train", rec_loss, prog_bar=True)
         self.log("reg_loss/train", reg_loss, prog_bar=True)
         self.log("loss/train", loss, prog_bar=True)

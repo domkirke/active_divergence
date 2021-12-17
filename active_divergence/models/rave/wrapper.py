@@ -1,4 +1,4 @@
-import sys, torch
+import sys, torch, pdb
 sys.path.append('../')
 from active_divergence.models.rave.rave import model
 from active_divergence.utils import checklist
@@ -27,8 +27,26 @@ class RAVE(model.RAVE):
         dict_config['sr'] = config.get('sr', 44100)
         super(RAVE, self).__init__(**dict_config)
 
+    @property
+    def device(self):
+        return next(self.parameters().__iter__()).device
+
+    @property
+    def train_dataloader(self):
+        return self.trainer.datamodule.train_dataloader
+
+    def training_step(self, batch, batch_idx):
+        x, y = batch
+        return super(RAVE, self).training_step(x, batch_idx)
+
+    def validation_step(self, batch, batch_idx):
+        x, y = batch
+        return  super(RAVE, self).validation_step(x, batch_idx)
+
+
     # external methods
     def encode(self, x, *args, **kwargs):
+        x = x.unsqueeze(-2).to(self.device)
         if self.pqmf is not None:  # MULTIBAND DECOMPOSITION
             x = self.pqmf(x)
         z_params = self.encoder(x)
@@ -52,8 +70,10 @@ class RAVE(model.RAVE):
         return x, z_params, z
 
     def reconstruct(self, x, *args, **kwargs):
-        x, _, _ = self.full_forward(x, add_noise=self.warmed_up)
-        return x
+        if isinstance(x, (list, tuple)):
+            x, y = x
+        out, _, _ = self.full_forward(x, add_noise=self.warmed_up)
+        return x, out
 
     def sample_from_prior(self, n_samples=1, temperature=1.0, sample=False):
         temperature = checklist(temperature)
@@ -69,11 +89,13 @@ class RAVE(model.RAVE):
         return torch.stack(generations, 1)
 
     def trace_from_inputs(self, x):
+        if isinstance(x, (list, tuple)):
+            x, y = x
         x, z_params, z = self.full_forward(x)
-        full_trace = {'histograms': {**{'latent_std/dim_%i' % i: z_params.stddev[..., i] for i in
-                                        range(z_params.stddev.shape[-1])},
-                                     **{'latent/dim_%i' % i: z_params.mean[..., i] for i in
-                                        range(z_params.mean.shape[-1])}}}
+        full_trace = {'histograms': {**{'latent_std/dim_%i' % i: z_params[1][..., i] for i in
+                                        range(z_params[1].shape[-1])},
+                                     **{'latent/dim_%i' % i: z_params[0][..., i] for i in
+                                        range(z_params[0].shape[-1])}}}
         return full_trace
 
 

@@ -135,7 +135,7 @@ class AudioDataset(Dataset):
         self._active_tasks = []
     active_tasks = property(_getactivetasks, _setactivetasks, _delactivetasks)
 
-    def __init__(self, root, sr=None, bitrate=16, target_length=None,
+    def __init__(self, root, sr=None, bitrate=16, dtype=None, target_length=None,
                  transforms=AudioTransform(),  target_transforms=None,
                  augmentations=[], active_tasks = [], **kwargs):
         """
@@ -157,6 +157,7 @@ class AudioDataset(Dataset):
         self.classes = {}
         self.sr = sr or 44100
         self.bitrate = bitrate or 16
+        self.dtype = dtype or torch.get_default_dtype()
         self.partitions = {}
         self.partition_files = None
         self.parse_files()
@@ -224,8 +225,12 @@ class AudioDataset(Dataset):
         if isinstance(data, list):
             try:
                 data = collate_out(data)
+                if data.dtype != self.dtype and self.dtype is not None:
+                    data = data.to(self.dtype)
             except RuntimeError:
                 print('[Warning] Data could not be stacked with indexes %s'%item)
+        else:
+            data = data.to(self.dtype)
         return data, metadata
 
 
@@ -243,7 +248,10 @@ class AudioDataset(Dataset):
                     if is_asynchronous:
                         idx[sequence_idx] = lardon.randslice(sequence_length)
                     else:
-                        seq_idx = random.randrange(0, self.data[item].shape[sequence_idx] - sequence_length)
+                        if self.data[item].shape[sequence_idx] <= sequence_length:
+                            seq_idx = 0
+                        else:
+                            seq_idx = random.randrange(0, self.data[item].shape[sequence_idx] - sequence_length)
                         idx[sequence_idx] = slice(seq_idx, seq_idx + sequence_length)
                 else:
                     idx[sequence_idx] = slice(0, sequence_length)
@@ -275,6 +283,8 @@ class AudioDataset(Dataset):
 
     def _get_item_metadata(self, item: int, seq=None):
         def get_time(metadata, seq):
+            if isinstance(metadata, float):
+                metadata = torch.Tensor([metadata])
             if seq > 0 and metadata.ndim == 1:
                 return metadata + seq / self.sr
             else:
@@ -368,7 +378,8 @@ class AudioDataset(Dataset):
         elif isinstance(item, str):
             item = self.partitions[item]
 
-        dataset = type(self)(self.root_directory, sr = self.sr, target_length=self.target_length, transforms=self._transforms)
+        dataset = type(self)(self.root_directory, sr = self.sr, target_length=self.target_length,
+                             bitrate=self.bitrate, dtype=self.dtype, transforms=self._transforms)
 
         if isinstance(self.data, lardon.OfflineDataList):
             dataset.data = lardon.OfflineDataList([self.data.entries[d] for d in item])
@@ -397,6 +408,15 @@ class AudioDataset(Dataset):
         del self.files[key]
         for k in self.metadata.keys():
             del self.metadata[k][key]
+
+    def check_audio_folder(self):
+        for f in tqdm(self.files, total=len(self.files), desc="Checking audio files..."):
+            try:
+                x, y = parse_audio_file(self.root_directory+"/"+f, sr=self.sr, len=self.target_length)
+            except Exception as e:
+                print("Problem with file %s"%f)
+                print("Exception : %s" % e)
+                pass
 
     def parse_files(self):
         """
@@ -616,6 +636,7 @@ class AudioDataset(Dataset):
                 'hash':self.hash,
                 'sr': self.sr,
                 'bitrate': self.bitrate,
+                'dtype': self.dtype,
                 'transforms':self._transforms,
                 'root_directory':self.root_directory,
                 'partitions':self.partitions,
@@ -659,6 +680,7 @@ class AudioDataset(Dataset):
             self.metadata = save_dict.get('metadata')
         self.sr = save_dict.get('sr')
         self.bitrate = save_dict.get('bitrate')
+        self.dtype = save_dict.get('dtype')
         self.target_length = save_dict.get('target_length')
         self.partitions = save_dict.get('partitions', {})
         self.partition_files = save_dict.get('partition_files')
@@ -700,6 +722,8 @@ class AudioDataset(Dataset):
         if self._flattened is not None:
             data = torch.stack([d.squeeze(self._flattened) for d in data.split(1, self._flattened)])
         data, meta['time'] = self._transforms(data, time=meta['time'])
+        if self.dtype is not None:
+            data = data.to(self.dtype)
         return data, meta
 
     def invert_transform(self, data):

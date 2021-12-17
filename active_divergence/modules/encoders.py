@@ -219,7 +219,8 @@ class ConvEncoder(nn.Module):
                 out = out.mean(1)
         if self.target_dist == dist.Normal:
             mu, std = out.split(out.shape[-1]//2, dim=-1)
-            std = std.clamp(-4).exp().sqrt()
+            #std = std.clamp(-4).exp().sqrt()
+            std = torch.sigmoid(std)
             out = dist.Normal(mu, std)
 
         return out
@@ -396,7 +397,9 @@ class DeconvEncoder(nn.Module):
             mu, std = out.split(out.shape[1] // 2, dim=1)
             if self.out_nnlin is not None:
                 mu = self.out_nnlin(mu)
-            out = dist.Normal(mu, std.clamp(-4).exp().sqrt())
+            #std = std.clamp(-4).exp().sqrt()
+            std = torch.sigmoid(std)
+            out = dist.Normal(mu, std)
         elif issubclass(self.target_dist, dist.Bernoulli):
             if self.out_nnlin is not None:
                 out = self.out_nnlin(out)

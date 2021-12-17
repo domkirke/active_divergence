@@ -22,7 +22,7 @@ class KLD(Loss):
         assert isinstance(params1, Distribution) and isinstance(params2, Distribution), \
             "KLD only works with two distributions"
         ld = self.reduce(kl_divergence(params1, params2), reduction=reduction)
-        return -ld
+        return ld
 
 
 def l2_kernel(x, y):

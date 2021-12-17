@@ -78,19 +78,26 @@ def check_mono(sgl, normalize=True):
 
 class AudioReconstructionMonitor(Callback):
 
-    def __init__(self, n_reconstructions=5, n_morphings=5, n_samples=5, n_files=1,
+    def __init__(self, plot_reconstructions=True, plot_samples=True,
+                 generate_samples=True, generate_files=True,
+                 n_reconstructions=5, n_samples=5, n_files=3,
                  temperature_range=None, monitor_epochs=1, reconstruction_epochs=5,
                  sample_reconstruction=False):
+        # reconstruction arguments
+        self.plot_reconstructions = plot_reconstructions
         self.n_reconstructions = n_reconstructions
+        self.generate_files = generate_files
+        self.n_files = n_files
+        self.sample_reconstruction = sample_reconstruction
+        # sample arguments
+        self.plot_samples = plot_samples
+        self.generate_samples = generate_samples
         self.n_samples = n_samples
         self.temperature_range = temperature_range or [0.01, 0.1, 1.0, 3.0, 5.0, 10.0]
-        self.n_files = n_files
-        self.n_morphings = n_morphings
         self.monitor_epochs = monitor_epochs
         self.reconstruction_epochs = reconstruction_epochs
-        self.sample_reconstruction = sample_reconstruction
 
-    def plot_reconstructions(self, model, loader):
+    def plot_rec(self, model, loader):
         data = next(loader(batch_size=self.n_reconstructions).__iter__())
         x_original, x_out = model.reconstruct(data)
         x_original = x_original.squeeze()
@@ -105,7 +112,7 @@ class AudioReconstructionMonitor(Callback):
                 ax[i].plot(x_out[i].squeeze().cpu())
         return fig
 
-    def plot_samples(self, model):
+    def plot_samps(self, model):
         out = model.sample_from_prior(n_samples=self.n_samples, temperature=self.temperature_range)
         if isinstance(out, dist.Distribution):
             out = out.mean
@@ -119,7 +126,13 @@ class AudioReconstructionMonitor(Callback):
         originals = []; generations = []
         for f in files:
             data, meta = dataset.transform_file(f"{dataset.root_directory}/{f}")
+            unsqueezed=False
+            if len(data.shape) == 1:
+                data = data.unsqueeze(0)
+                unsqueezed = True
             original, generation = model.reconstruct(data) 
+            if unsqueezed:
+                original = original[0]; generation = generation[0]
             original = original.cpu()
             if isinstance(generation, dist.Normal):
                 generation = generation.sample() if self.sample_reconstruction else generation.mean
@@ -132,34 +145,39 @@ class AudioReconstructionMonitor(Callback):
 
     def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
         with torch.no_grad():
+            
             if trainer.state.stage == RunningStage.SANITY_CHECKING:
                 return
+            
             if trainer.current_epoch % self.monitor_epochs != 0:
                 return
             model = trainer.model
             dataset = None
             if hasattr(trainer.datamodule, "dataset"):
                 dataset = trainer.datamodule.dataset
-            # plot reconstructions
-            if hasattr(model, 'reconstruct'):
-                train_rec = self.plot_reconstructions(model, trainer.datamodule.train_dataloader)
-                trainer.logger.experiment.add_figure('reconstructions/train', train_rec, trainer.current_epoch)
-                valid_rec = self.plot_reconstructions(model, trainer.datamodule.val_dataloader)
-                trainer.logger.experiment.add_figure('reconstructions/valid', valid_rec, trainer.current_epoch)
-                if trainer.datamodule.test_dataset:
-                    test_rec = self.plot_reconstructions(model, trainer.datamodule.test_dataloader)
-                    trainer.logger.experiment.add_figure('reconstructions/test', test_rec, trainer.current_epoch)
-                # perform full audio reconstructions
-                if trainer.current_epoch % self.reconstruction_epochs == 0:
-                    if dataset is not None:
-                        files = random.choices(dataset.files, k=self.n_files)
-                        raw_original, raw_generation = self.reconstruct_file(model, files, dataset)
-                        trainer.logger.experiment.add_audio('original', raw_original, global_step=trainer.current_epoch, sample_rate=dataset.sr)
-                        trainer.logger.experiment.add_audio('generation', raw_generation, global_step=trainer.current_epoch,
-                                                            sample_rate=dataset.sr)
+
+            # plot and generate reconstructions
+            if  hasattr(model, 'reconstruct'):
+                if self.plot_reconstructions:
+                    train_rec = self.plot_rec(model, trainer.datamodule.train_dataloader)
+                    trainer.logger.experiment.add_figure('reconstructions/train', train_rec, trainer.current_epoch)
+                    valid_rec = self.plot_rec(model, trainer.datamodule.val_dataloader)
+                    trainer.logger.experiment.add_figure('reconstructions/valid', valid_rec, trainer.current_epoch)
+                    if trainer.datamodule.test_dataset:
+                        test_rec = self.plot_rec(model, trainer.datamodule.test_dataloader)
+                        trainer.logger.experiment.add_figure('reconstructions/test', test_rec, trainer.current_epoch)
+                if self.generate_files:
+                    if trainer.current_epoch % self.reconstruction_epochs == 0:
+                        if dataset is not None:
+                            files = random.choices(dataset.files, k=self.n_files)
+                            raw_original, raw_generation = self.reconstruct_file(model, files, dataset)
+                            trainer.logger.experiment.add_audio('original', raw_original, global_step=trainer.current_epoch, sample_rate=dataset.sr)
+                            trainer.logger.experiment.add_audio('generation', raw_generation, global_step=trainer.current_epoch,
+                                                                sample_rate=dataset.sr)
 
             # plot prior sampling
             if hasattr(model, 'sample_from_prior'):
-                samples = self.plot_samples(model)
-                trainer.logger.experiment.add_figure('samples', samples, trainer.current_epoch)
+                if self.plot_samples:
+                    samples = self.plot_samps(model)
+                    trainer.logger.experiment.add_figure('samples', samples, trainer.current_epoch)
 

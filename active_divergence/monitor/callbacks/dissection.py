@@ -49,23 +49,24 @@ class DissectionMonitor(Callback):
                 trainer.logger.experiment.add_histogram("params/"+k, v, global_step=trainer.current_epoch)
             n_batch = 0
             traces = []
-            for data in trainer.datamodule.train_dataloader(batch_size=self.batch_size):
+            loader = trainer.datamodule.train_dataloader(batch_size=self.batch_size, drop_last=False)
+            for i, data in enumerate(loader):
+                # weird bug occuring with padded_convs when batch size is irregular.
+                if i == len(loader) - 1:
+                    break
                 trace_out = trainer.model.trace_from_inputs(data)
                 n_batch += 1
                 traces.append(trace_out)
                 if n_batch > self.n_batches:
                     break
-                # if not graph:
-                #     trainer.logger.experiment.add_graph(trainer.model, data)
-                #     graph = True
 
             trace = accumulate_traces(traces)
             # add outputs
-            for k, v in trace['histograms'].items():
+            for k, v in trace.get('histograms', {}).items():
                 trainer.logger.experiment.add_histogram(k, v, global_step = trainer.current_epoch)
 
             if trainer.current_epoch % self.embedding_epochs == 0:
-                for k, v in trace['embeddings'].items():
+                for k, v in trace.get('embeddings', {}).items():
                     label_img = None; metadata = None
                     if isinstance(v, dict):
                         label_img = v['label_img']

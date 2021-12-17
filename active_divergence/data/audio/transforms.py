@@ -194,8 +194,6 @@ class Stereo(AudioTransform):
             return x, time
 
 
-
-
 class Window(AudioTransform):
     invertible = True
     def __init__(self, window_size, hop_size=None, dim=-1, batch_dim=0, split_time=False, pad=False, inversion="crop"):
@@ -260,7 +258,6 @@ class Window(AudioTransform):
             return x, time
         else:
             return x
-
 
 class Normalize(AudioTransform):
     def __init__(self, mode="minmax", scale="bipolar"):
@@ -1488,7 +1485,6 @@ class Cartesian(AudioTransform):
             return out
         else:
             return out, time
-
 
 
 class Harmonic(AudioTransform):

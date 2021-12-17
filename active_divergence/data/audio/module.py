@@ -37,7 +37,7 @@ class AudioDataModule(LightningDataModule):
         self.dataset = None
         self.dataset_args = dict(config.dataset)
         self.transform_args = config.get('transforms', {})
-        self.augmentation_args = config.get('augmentations', {})
+        self.augmentation_args = config.get('augmentations', [])
         self.loader_args = config.get('loader', {})
         self.partition_balance = config.get('partition_balance', [0.8, 0.2])
         self.dataset = None
@@ -48,14 +48,17 @@ class AudioDataModule(LightningDataModule):
 
     def load_dataset(self, dataset_args, transform_args, augmentation_args, make_partitions=False):
         dataset = AudioDataset(**dataset_args)
-        if transform_args:
-            name = transform_args.name
+        if dataset_args.get('check_folder'):
+            dataset.check_audio_folder()
+        if transform_args.get('pre_transforms'):
+            name = transform_args.get('name')
             if name in dataset.available_transforms and (not transform_args.force):
                 dataset.import_transform(name)
             else:
                 assert name is not None
                 pre_transforms = parse_transforms(transform_args.pre_transforms) or transforms.AudioTransform()
                 dataset.transforms = pre_transforms
+                pdb.set_trace()
                 dataset.import_data(write_transforms=True, save_transform_as=name, force=transform_args.force)
         else:
             dataset.import_data()
@@ -95,22 +98,22 @@ class AudioDataModule(LightningDataModule):
         return tuple(self.dataset[0][0].shape)
 
     # return the dataloader for each split
-    def train_dataloader(self, batch_size=None):
-        loader_args = self.loader_args
-        loader_args['batch_size'] = batch_size or loader_args.get('batch_size', 128)
+    def train_dataloader(self, **kwargs):
+        loader_args = {**self.loader_args, **kwargs}
+        print(loader_args)
         loader_train = DataLoader(self.train_dataset, **loader_args)
         return loader_train
 
-    def val_dataloader(self, batch_size=None):
-        loader_args = self.loader_args
+    def val_dataloader(self, batch_size=None, **kwargs):
+        loader_args = {**self.loader_args, **kwargs}
         loader_args['batch_size'] = batch_size or loader_args.get('batch_size', 128)
         loader_val = DataLoader(self.valid_dataset, **loader_args)
         return loader_val
 
-    def test_dataloader(self, batch_size=None):
+    def test_dataloader(self, batch_size=None, **kwargs):
         if self.test_dataset is None:
             return None
-        loader_args = self.loader_args
+        loader_args = {**self.loader_args, **kwargs}
         loader_args['batch_size'] = batch_size or loader_args.get('batch_size', 128)
         loader_test = DataLoader(self.test_dataset, **loader_args)
         return loader_test
