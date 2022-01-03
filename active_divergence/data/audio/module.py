@@ -50,6 +50,7 @@ class AudioDataModule(LightningDataModule):
         dataset = AudioDataset(**dataset_args)
         if dataset_args.get('check_folder'):
             dataset.check_audio_folder()
+
         if transform_args.get('pre_transforms'):
             name = transform_args.get('name')
             if name in dataset.available_transforms and (not transform_args.force):
@@ -58,10 +59,9 @@ class AudioDataModule(LightningDataModule):
                 assert name is not None
                 pre_transforms = parse_transforms(transform_args.pre_transforms) or transforms.AudioTransform()
                 dataset.transforms = pre_transforms
-                pdb.set_trace()
-                dataset.import_data(write_transforms=True, save_transform_as=name, force=transform_args.force)
+                dataset.import_data(write_transforms=True, save_transform_as=name, force=transform_args.force, min_len=self.dataset_args.get('min_length'))
         else:
-            dataset.import_data()
+            dataset.import_data(min_len=self.dataset_args.get('min_length'))
         # flatten data in case
         if dataset_args.get('flatten') is not None:
             dataset.flatten_data(int(dataset_args['flatten']))
@@ -100,7 +100,6 @@ class AudioDataModule(LightningDataModule):
     # return the dataloader for each split
     def train_dataloader(self, **kwargs):
         loader_args = {**self.loader_args, **kwargs}
-        print(loader_args)
         loader_train = DataLoader(self.train_dataset, **loader_args)
         return loader_train
 

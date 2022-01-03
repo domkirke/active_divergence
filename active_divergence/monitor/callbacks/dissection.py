@@ -49,6 +49,8 @@ class DissectionMonitor(Callback):
                 trainer.logger.experiment.add_histogram("params/"+k, v, global_step=trainer.current_epoch)
             n_batch = 0
             traces = []
+            if not hasattr(trainer.model, "trace_from_inputs"):
+                return 
             loader = trainer.datamodule.train_dataloader(batch_size=self.batch_size, drop_last=False)
             for i, data in enumerate(loader):
                 # weird bug occuring with padded_convs when batch size is irregular.
@@ -60,19 +62,20 @@ class DissectionMonitor(Callback):
                 if n_batch > self.n_batches:
                     break
 
-            trace = accumulate_traces(traces)
-            # add outputs
-            for k, v in trace.get('histograms', {}).items():
-                trainer.logger.experiment.add_histogram(k, v, global_step = trainer.current_epoch)
+            if len(traces) != 0:
+                trace = accumulate_traces(traces)
+                # add outputs
+                for k, v in trace.get('histograms', {}).items():
+                    trainer.logger.experiment.add_histogram(k, v, global_step = trainer.current_epoch)
 
-            if trainer.current_epoch % self.embedding_epochs == 0:
-                for k, v in trace.get('embeddings', {}).items():
-                    label_img = None; metadata = None
-                    if isinstance(v, dict):
-                        label_img = v['label_img']
-                        metadata = v['metadata']
-                        v = v['data']
-                    if len(v.shape) != 2:
-                        v = v.reshape(-1, v.size(-1))
-                    trainer.logger.experiment.add_embedding(v, tag="latent", label_img=label_img, metadata=metadata, global_step=trainer.current_epoch)
+                if trainer.current_epoch % self.embedding_epochs == 0:
+                    for k, v in trace.get('embeddings', {}).items():
+                        label_img = None; metadata = None
+                        if isinstance(v, dict):
+                            label_img = v['label_img']
+                            metadata = v['metadata']
+                            v = v['data']
+                        if len(v.shape) != 2:
+                            v = v.reshape(-1, v.size(-1))
+                        trainer.logger.experiment.add_embedding(v, tag="latent", label_img=label_img, metadata=metadata, global_step=trainer.current_epoch)
 

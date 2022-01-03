@@ -1,9 +1,12 @@
-from . import utils
-from . import data
-from . import losses
-from . import modules
-from . import models
-from .monitor import plugins, callbacks
+import sys
+sys.path.append("../")
+
+from active_divergence import utils
+from active_divergence import data
+from active_divergence import losses
+from active_divergence import modules
+from active_divergence import models
+from active_divergence.monitor import plugins, callbacks
 
 def get_callbacks(config):
     if config is None:

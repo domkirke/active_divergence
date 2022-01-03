@@ -584,7 +584,10 @@ class RAVE(pl.LightningModule):
             x = self.pqmf.inverse(x)
             y = self.pqmf.inverse(y)
 
-        distance = self.distance(x, y)
+        try:
+            distance = self.distance(x, y)
+        except:
+            pdb.set_trace()
 
         if self.trainer is not None:
             self.log("validation", distance)

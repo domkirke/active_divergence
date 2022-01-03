@@ -3,6 +3,14 @@ import omegaconf
 import numpy as np, os, torch, sys, torch.distributions as dist, copy, bisect
 sys.path.append('../')
 
+def parse_slice(item, length):
+    start = item.start or 0
+    stop = item.stop or length
+    start = start if start >= 0 else length + start
+    stop = start if stop >= 0 else length + stop
+    return start, stop, item.step
+
+
 def checkdist(obj):
     if isinstance(obj, str):
         return getattr(dist, obj)

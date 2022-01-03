@@ -60,6 +60,23 @@ class ComposeAudioTransform(AudioTransform):
     def __getitem__(self, item):
         return self.transforms[item]
 
+    def __getattr__(self, item):
+        if item in self.__dict__.keys():
+            return self.__dict__('item')
+        else:
+            values = []
+            if "transforms" in self.__dict__:
+                for t in self.transforms:
+                    if hasattr(t, item):
+                        values.append(getattr(t, item))
+            if len(values) == 0:
+                raise AttributeError
+            else:
+                if len(values) == 1:
+                    return values[0]
+                else:
+                    return values
+
     def __init__(self, transforms = [], sr=44100):
         self.transforms = transforms
 
@@ -259,6 +276,55 @@ class Window(AudioTransform):
         else:
             return x
 
+class MuLaw(AudioTransform):
+    def __init__(self, channels=256, one_hot=None, **kwargs):
+        super().__init__(**kwargs)
+        self.channels = channels
+        self.one_hot = one_hot
+        self.encoding = torchaudio.transforms.MuLawEncoding(channels)
+        self.decoding = torchaudio.transforms.MuLawDecoding(channels)
+
+    def encode(self, x):
+        out = self.encoding(x)
+        if self.one_hot == "channel":
+            out = torch.nn.functional.one_hot(out, self.channels).transpose(-1, -2).contiguous()
+        elif self.one_hot == "categorical":
+            out = torch.nn.functional.one_hot(out, self.channels)
+        return out
+
+    def decode(self, x):
+        x = x.long()
+        if self.one_hot == "channel":
+            x = x.transpose(-2, -1)
+            batch_shape = x.shape[:-2]
+            idx = x.view(-1, x.shape[-2], x.shape[-1]).nonzero()[:, -1]
+            out = idx.reshape(*batch_shape, -1)
+        elif self.ont_hot == "categorical":
+            batch_shape = x.shape[:-2]
+            idx = x.view(-1, x.shape[-2], x.shape[-1]).nonzero()[:, 1]
+            out = idx.reshape(*batch_shape, -1)
+        else:
+            out = x
+        out = self.decoding(out)
+        return out
+
+    def __call__(self, x, time=None, **kwargs):
+        if isinstance(x, list):
+            return apply_transform_to_list(self, x, time=time)
+        if time is None:
+            return self.encode(x)
+        else:
+            return self.encode(x), time
+
+    def invert(self, x, time=None, **kwargs):
+        if isinstance(x, list):
+            return apply_inver_transform_to_list(self, x, time=time)
+        if time is None:
+            return self.decoding(x)
+        else:
+            return self.decoding(x), time
+
+
 class Normalize(AudioTransform):
     def __init__(self, mode="minmax", scale="bipolar"):
         super(Normalize, self).__init__()
@@ -380,6 +446,10 @@ class STFT(AudioTransform):
             repr += f", hps_margin{self.hps_margin}, hps_power={self.hps_power}"
         repr += f", backend={self.backend})"
         return repr
+
+    @property
+    def frame_dim(self):
+        return self.nfft // 2 + 1
 
     def __call__(self, x, *args, time=None, **kwargs):
         if isinstance(x, list):
@@ -611,6 +681,10 @@ class DCT(AudioTransform):
         self.hps = hps
         self.hps_margin = hps_margin
         self.hps_power = hps_power
+
+    @property
+    def frame_dim(self):
+        return len(self.nfft // 2)
 
     def __call__(self, x, *args, time=None, **kwargs):
         if isinstance(x, list):
@@ -920,6 +994,10 @@ class CQT(AudioTransform):
             return [self.invert(x_tmp) for x_tmp in x]
         return self.invert_callback(x, **self.cqt_args)
 
+    @property
+    def frame_dim(self):
+        return len(self.get_frequencies())
+
     def get_frequencies(self, as_notes=False, as_midi=False):
         freq = librosa.cqt_frequencies(self.cqt_args.get('n_bins', 84),
                                        self.cqt_args.get('fmin', librosa.note_to_hz('C1')),
@@ -1071,6 +1149,10 @@ class NSGT(AudioTransform):
 
         else:
             return None
+
+    @property
+    def frame_dim(self):
+        return len(self.srscale)
 
     def __call__(self, x, *args, time=None, **kwargs):
         if isinstance(x, list):

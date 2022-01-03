@@ -9,7 +9,7 @@ from pytorch_lightning.trainer.states import RunningStage
 
 
 class AutoEncoder(pl.LightningModule):
-    def __init__(self, config=None, encoder=None, decoder=None, training=None, latent=None, data=None, **kwargs):
+    def __init__(self, config=None, encoder=None, decoder=None, training=None, latent=None, **kwargs):
         super().__init__()
         config = config or OmegaConf.create()
         if isinstance(config, dict):
@@ -39,11 +39,6 @@ class AutoEncoder(pl.LightningModule):
         reg_config = config.training.get('regularization', OmegaConf.create())
         self.regularization_loss = getattr(regularization, reg_config.get('type', "KLD"))(**reg_config.get('args',{}))
         self.prior = getattr(priors, config.training.get('prior', "isotropic_gaussian"))
-        save_config = config.training.get('save')
-        self.save_epochs = save_config.get('save_epochs')
-        if self.save_epochs is not None:
-            self.save_dir = f"{save_config.path}/{save_config.name}"
-            checkdir(self.save_dir)
         # record config
         self.config = config
         self.save_hyperparameters(dict(self.config))

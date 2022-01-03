@@ -1,0 +1,45 @@
+data:
+  module: SingleAudioDataModule
+  dataset:
+    path: additive.wav
+    sr: 44100
+    bitrate: 16
+    chunk_size: 1024
+    n_batches: 32
+  loader:
+    batch_size: 128
+    num_workers: 16
+    shuffle: 1
+
+model:
+  type: Regressor
+  regressor: 
+#    type: ConvRegressor
+#    args:
+#      #encoding:
+#      #  dim: 128
+#      channels: [64, 128, 256, 128, 64, 32]
+#      kernel_size: [13,13,13,13,13,13,13]
+#      bias: False
+#      nn_lin: Tanh
+    type: MLPRegressor
+    args: 
+      dim: 1024
+      nlayers: 4
+      batch: norm
+      out_nnlin: Tanh
+  training:
+    lr: 1.e-3
+    save:
+      path: &dir /slow-1/axel/active_divergence/audio
+      name: &name regressor
+
+callbacks:
+  [
+    { type: LearningRateMonitor, args: {logging_interval: "epoch"} },
+    { type: ModelSummary, args: {max_depth: 1} },
+    { type: ModelCheckpoint, args: {dirpath: *dir, filename: *name, every_n_epochs: 1, save_last: True, epoch_period: 10} },
+    { type: DissectionMonitor, args: {monitor_epochs: 1, embedding_epochs: 10, batch_size: 1024} },
+    { type: AudioReconstructionMonitor }
+  ]
+      

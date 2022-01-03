@@ -39,9 +39,11 @@ else:
     model = model_type.load_from_checkpoint(args.checkpoint)
 
 
+"""
 f = data.dataset.root_directory + "/" + data.dataset.files[0]
 x, y = data.dataset.transform_file(f)
 x_inv = data.dataset.invert_transform(x)
+"""
 
 # Configure callbacks
 callbacks = get_callbacks(config.get('callbacks'))

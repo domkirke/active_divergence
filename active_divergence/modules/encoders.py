@@ -1,10 +1,11 @@
+from collections import namedtuple
 import sys, pdb
 sys.path.append('../')
 import torch, torch.nn as nn, numpy as np
-from active_divergence.utils import checklist, checktuple, print_stats, checkdist
+from active_divergence.utils import checklist, checktuple, print_stats, checkdist, parse_slice
 from omegaconf import OmegaConf
 import torch.distributions as dist
-from active_divergence.modules import layers as layers, Reshape
+from active_divergence.modules import layers as layers, mlp_dist_hash, conv_dist_hash, Reshape
 from typing import Tuple, Union
 
 
@@ -34,6 +35,7 @@ class MLPEncoder(nn.Module):
         self.norm = config.get('norm')
         self.dropout = config.get('dropout')
         self.target_dist = config.get('target_dist')
+        self.weight_norm = config.get('weight_norm', False)
         if self.target_dist is not None:
             self.target_dist = checkdist(self.target_dist)
             if self.target_dist not in self.available_distributions:
@@ -46,7 +48,7 @@ class MLPEncoder(nn.Module):
         elif isinstance(self.target_shape, int):
             self.target_shape = (config.target_shape,)
         else:
-            raise TypeError('target shape of %d module must be int / iterable ints'%(type(self)))
+            raise TypeError('target shape of %s module must be int / iterable ints'%(type(self)))
         self.layer = self.Layer if config.get('layer') is None else getattr(layers, config.layer)
         self._init_modules()
 
@@ -57,9 +59,9 @@ class MLPEncoder(nn.Module):
         target_shape = np.cumprod(list(self.target_shape))[-1]
         target_shape = target_shape if self.target_dist not in [dist.Normal] else target_shape * 2
         self.mlp = self.Layer(input_size, target_shape, nlayers=self.nlayers, hidden_dims=self.hidden_dims,
-                              nn_lin=self.nn_lin, norm=self.norm, dropout=self.dropout)
+                              nn_lin=self.nn_lin, norm=self.norm, dropout=self.dropout, weight_norm=self.weight_norm)
 
-    def forward(self, x: torch.Tensor, **kwargs) -> Union[torch.Tensor, dist.Distribution]:
+    def forward(self, x: torch.Tensor, return_hidden=False, **kwargs) -> Union[torch.Tensor, dist.Distribution]:
         """
         Encodes incoming tensor.
         Args:
@@ -69,7 +71,9 @@ class MLPEncoder(nn.Module):
             y (torch.Tensor or Distribution): encoded data.
         """
         batch_shape = x.shape[:-len(self.input_size)]
-        hidden = self.mlp(x.reshape(-1, np.prod(self.input_size)))
+        hidden = self.mlp(x, return_hidden=return_hidden)
+        if return_hidden:
+            hidden, hidden_history = hidden
         if self.target_dist == dist.Normal:
             out = list(hidden.split(hidden.shape[-1]//2, -1))
             if self.target_shape:
@@ -88,12 +92,46 @@ class MLPEncoder(nn.Module):
             out = self.target_dist(probs=torch.softmax(hidden))
         else:
             out = hidden.reshape(*batch_shape, *checktuple(self.target_shape))
-        return out
+            if hasattr(self, "out_nnlin"):
+                out = self.out_nnlin(out)
+        if return_hidden:
+            return out, hidden_history
+        else:
+            return out
 
 
 class ConvEncoder(nn.Module):
-    Layer = layers.ConvLayer
+    Layer = "ConvLayer"
     Flatten = "MLP"
+
+    def __len__(self):
+        return len(self.conv_modules) + 1
+
+    def __getitem__(self, item):
+        if isinstance(item, int):
+            if item < 0:
+                item = len(self) + item
+            if item == 0:
+                return nn.Sequential(self.pre_conv, self.conv_modules[0])
+            elif item > 0 and item < len(self) - 1:
+                return self.conv_modules[item]
+            elif item == len(self) - 1:
+                modules = []
+                if self.flatten_module is not None:
+                    modules.append(self.flatten_module)
+                if hasattr(self, "dist_module"):
+                    modules.append(self.dist_module)
+            else:
+                return 
+        elif isinstance(item, slice):
+            modules = []
+            assert item.step is None
+            idxs = list(range(len(self)))[item]
+            modules = [self.__getitem__(i) for i in idxs]
+        else:
+            raise IndexError(item)
+        return nn.Sequential(*modules)
+
     def __init__(self, config):
         """
         Convolutional encoder for auto-encoding architectures. OmegaConfuration may include:
@@ -121,7 +159,7 @@ class ConvEncoder(nn.Module):
         self.input_size = config.input_dim
         if self.input_size is None:
             print('[Warning] : input dimension not known, may lead to degenerated dimensions')
-        self.channels = ([config.input_dim[0]] or [1]) + checklist(config.channels)
+        self.channels = checklist(config.channels)
         self.n_layers = len(self.channels) - 1
         self.kernel_size = checklist(config.get('kernel_size', 7), n=self.n_layers)
         self.dilation = checklist(config.get('dilation', 1), n=self.n_layers)
@@ -130,23 +168,29 @@ class ConvEncoder(nn.Module):
         self.stride = checklist(config.get('stride',1), n=self.n_layers)
         self.dim = config.get('dim', len(config.get('input_dim', [None]*3)) - 1)
         self.nn_lin = checklist(config.get('nn_lin'), n=self.n_layers)
-        if config.get('layer') is not None:
-            self.Layer = getattr(layers, config.layer)
+        
+        self.Layer = checklist(config.get('layer', self.Layer), n=self.n_layers)
         self.config_flatten = dict(config.get('flatten_args', {}))
         self.flatten_type = getattr(layers, config.get('flatten_module', self.Flatten))
         self.norm = checklist(config.get('norm'), n=self.n_layers)
         self.bias = config.get('bias', True)
-
+        self.block_args = checklist(config.get('block_args', {}), n=self.n_layers)
 
         # flattening parameters
         self.target_shape = config.get('target_shape')
         self.target_dist = config.get('target_dist')
+        self.reshape_method = config.get('reshape_method', "flatten")
+
+        # distribution parameters
+        self.out_nnlin = config.get('out_nnlin')
+        if self.out_nnlin is not None:
+            self.out_nnlin = getattr(nn, self.out_nnlin)()
         if self.target_dist:
             self.target_dist = checkdist(self.target_dist)
-        self.reshape_method = config.get('reshape_method', "flatten")
-        if self.target_dist and not self.target_shape:
-            if isinstance(self.target_dist, dist.Normal):
-                self.channels[-1] *= 2
+            self.dist_module = mlp_dist_hash[self.target_dist](out_nnlin=self.out_nnlin, dim=self.dim)
+            self.channels[-1] *= self.dist_module.required_dim_upsampling
+        else:
+            self.dist_module = self.out_nnlin if self.out_nnlin is not None else None
 
         # init modules
         # self.Flatten = self.Flatten if config.flatten is None else getattr(layers, config.flatten)
@@ -155,8 +199,10 @@ class ConvEncoder(nn.Module):
 
     def _init_conv_modules(self):
         modules = []
+        self.pre_conv = layers.conv_hash[self.dim](self.input_size[0], self.channels[0], 1)
         for n in range(self.n_layers):
-            current_layer = self.Layer([self.channels[n], self.channels[n+1]],
+            Layer = getattr(layers, self.Layer[n])
+            current_layer = Layer([self.channels[n], self.channels[n+1]],
                                       kernel_size=self.kernel_size[n],
                                       dilation=self.dilation[n],
                                       padding=self.padding[n],
@@ -165,7 +211,8 @@ class ConvEncoder(nn.Module):
                                       norm=self.norm[n],
                                       dropout=self.dropout[n],
                                       bias=self.bias,
-                                      nn_lin=self.nn_lin[n])
+                                      nn_lin=self.nn_lin[n], 
+                                      **self.block_args[n])
             modules.append(current_layer)
         self.conv_modules = nn.ModuleList(modules)
 
@@ -181,7 +228,7 @@ class ConvEncoder(nn.Module):
                 target_shape *= 2
             if self.reshape_method == "flatten":
                 flatten_shape = self.channels[-1] * int(np.cumprod(current_shape)[-1])
-                self.flatten_module = self.flatten_type(flatten_shape, target_shape, **self.config_flatten)
+                self.flatten_module = nn.Sequential(Reshape(flatten_shape, incoming_dim=self.dim+1), self.flatten_type(flatten_shape, target_shape, **self.config_flatten))
             elif self.reshape_method == "reshape":
                 self.flatten_module = Reshape(self.channels[-1])
 
@@ -190,7 +237,7 @@ class ConvEncoder(nn.Module):
         self._init_flattening_modules()
 
 
-    def forward(self, x: torch.Tensor, **kwargs) -> Union[torch.Tensor, dist.Distribution]:
+    def forward(self, x: torch.Tensor, return_hidden=False, **kwargs) -> Union[torch.Tensor, dist.Distribution]:
         """
         Encodes incoming tensor.
         Args:
@@ -199,39 +246,34 @@ class ConvEncoder(nn.Module):
         Returns:
             y (torch.Tensor or Distribution): encoded data.
         """
-        hidden = []
         batch_shape = x.shape[:-(self.dim + 1)]
         x = x.reshape(-1, *x.shape[-(self.dim + 1):])
-        out = x
+
+        # compute convs
+        out = self.pre_conv(x)
+        hidden = []
         for conv_module in self.conv_modules:
             out = conv_module(out)
             hidden.append(out)
         out = out.view(*batch_shape, *out.shape[1:])
 
         if self.flatten_module is not None:
-            if self.reshape_method == "flatten":
-                out = self.flatten_module(out.view(*batch_shape, -1))
-            elif self.reshape_method == "reshape":
-                out = self.flatten_module(out, batch_shape = batch_shape)
-            if self.aggregate == "last":
-                out = out[:, -1]
-            elif self.aggregate == "mean":
-                out = out.mean(1)
-        if self.target_dist == dist.Normal:
-            mu, std = out.split(out.shape[-1]//2, dim=-1)
-            #std = std.clamp(-4).exp().sqrt()
-            std = torch.sigmoid(std)
-            out = dist.Normal(mu, std)
-
-        return out
-
+            out = self.flatten_module(out)
+        hidden.append(out)
+        if self.dist_module is not None:
+            out = self.dist_module(out)
+        if return_hidden:
+            return out, hidden
+        else:
+            return out
 
 
 class MLPDecoder(MLPEncoder):
     pass
 
+
 class DeconvEncoder(nn.Module):
-    Layer = layers.DeconvLayer
+    Layer = "DeconvLayer"
     Flatten = "MLP"
     def __init__(self, config: OmegaConf, encoder: nn.Module = None):
         """
@@ -260,40 +302,38 @@ class DeconvEncoder(nn.Module):
         # access to encoder may be useful for skip-connection / pooling operations
         if encoder is not None:
             self.__dict__['encoder'] = encoder
-        # convolutional parameters
+        # set dimensionality parameters
         self.input_size = config.get('input_dim')
-        if self.input_size is None:
-            print('[Warning] : input dimension not known, may lead to degenerated dimensions')
         self.target_shape = config.get('target_shape')
-        if self.target_shape:
-            self.out_channels = self.target_shape[0]
-        else:
-            self.out_channels = config.get('out_channels')
-        self.target_dist = config.get('target_dist')
-        if self.target_dist:
-            self.target_dist = checkdist(self.target_dist)
-            self.out_channels = self.get_channels_from_dist(self.out_channels or 1)
+        self.out_channels = self.target_shape[0] if self.target_shape else config.get('out_channels')
 
-        self.channels = list(reversed(config.get('channels'))) + checklist(self.out_channels)
+        # set convolution parameters
+        self.dim = config.get('dim') or len(self.target_shape or [None] * 3) - 1
+        self.channels = list(reversed(config.get('channels'))) 
         self.n_layers = len(self.channels) - 1
         self.kernel_size = list(reversed(checklist(config.get('kernel_size', 7), n=self.n_layers)))
         self.dilation = list(reversed(checklist(config.get('dilation', 1), n=self.n_layers)))
-        if config.get('padding') is None:
-            self.padding = [int(np.ceil(k/2)) for k in self.kernel_size]
-        else:
-            self.padding = list(reversed(checklist(config.get('padding'), n=self.n_layers)))
+        self.padding = list(reversed(checklist(config.get('padding'), n=self.n_layers)))
         self.dropout = list(reversed(checklist(config.get('dropout'), n=self.n_layers)))
         self.stride = list(reversed(checklist(config.get('stride', 1), n=self.n_layers)))
-        self.dim = config.get('dim') or len(self.target_shape or [None] * 3) - 1
         self.output_padding = [np.array(0,)]*self.n_layers
         self.nn_lin = list(reversed(checklist(config.get('nn_lin', layers.DEFAULT_NNLIN), n=self.n_layers)))
+        
+        self.norm = list(reversed(checklist(config.get('norm'), n=self.n_layers)))
+        self.bias = config.get('bias',True)
+        self.Layer = checklist(config.get('layer', self.Layer), n=self.n_layers)
+        self.block_args = checklist(config.get('block_args', {}), n=self.n_layers)
+
+        # output parameters
+        self.target_dist = config.get('target_dist')
         self.out_nnlin = config.get('out_nnlin')
         if self.out_nnlin is not None:
             self.out_nnlin = getattr(nn, self.out_nnlin)()
-        self.norm = list(reversed(checklist(config.get('norm'), n=self.n_layers)))
-        self.bias = config.get('bias',True)
-        if config.get('layer') is not None:
-            self.Layer = getattr(layers, config.layer)
+        if self.target_dist:
+            self.target_dist = checkdist(self.target_dist)
+            self.dist_module = conv_dist_hash[self.target_dist](out_nnlin=self.out_nnlin, dim=self.dim)
+        else:
+            self.dist_module = self.out_nnlin if self.out_nnlin is not None else None
 
         # flattening parameters
         self.reshape_method = config.get('reshape_method') or "flatten"
@@ -303,6 +343,34 @@ class DeconvEncoder(nn.Module):
         self.aggregate = config.get('aggregate')
         # init modules
         self._init_modules()
+
+    def __len__(self):
+        return len(self.conv_modules) + 1
+
+    def __getitem__(self, item):
+        if isinstance(item, int):
+            if item < 0:
+                item = len(self) + item
+            if item == 0:
+                modules = []
+                if self.flatten_module is not None:
+                    modules.append(self.flatten_module)
+            elif item > 0 and item  < len(self) - 1:
+                return self.conv_modules[item-1]
+            elif item == len(self) - 1:
+                modules = [self.conv_modules[-1], self.final_conv]
+                if self.dist_module:
+                    modules.append(self.dist_module)
+            else:
+                raise IndexError
+        elif isinstance(item, slice):
+            modules = []
+            assert item.step is None
+            idxs = list(range(len(self)))[item]
+            modules = [self.__getitem__(i) for i in idxs]
+        else:
+            raise IndexError(item)
+        return nn.Sequential(*modules)
 
     def get_channels_from_dist(self, out_channels: int, target_dist: dist.Distribution=None):
         """returns channels from output distribution."""
@@ -321,48 +389,75 @@ class DeconvEncoder(nn.Module):
 
     def _init_conv_modules(self):
         modules = []
+        Layers = [getattr(layers, l) for l in self.Layer]
         if self.target_shape is not None:
             # retrieve output paddings
             current_shape = np.array(self.target_shape[1:])
             output_padding = [None]*self.n_layers
             for n in reversed(range(self.n_layers)):
-                output_padding[n], current_shape = self.Layer.get_output_padding(current_shape, self.kernel_size[n],
-                                                               self.padding[n], self.dilation[n], self.stride[n])
+                output_padding[n], current_shape = Layers[n].get_output_padding(current_shape, kernel_size=self.kernel_size[n],
+                                                               padding=self.padding[n], dilation=self.dilation[n],
+                                                               stride=self.stride[n], **self.block_args[n])
         else:
             output_padding = self.output_padding
+
         for n in range(self.n_layers):
-            current_layer = self.Layer([self.channels[n], self.channels[n + 1]],
-                                      kernel_size=self.kernel_size[n],
-                                      dilation=self.dilation[n],
-                                      padding=self.padding[n],
-                                      dropout=self.dropout[n],
-                                      stride=self.stride[n],
-                                      norm=self.norm[n],
-                                      dim=self.dim,
-                                      bias = self.bias,
-                                      nn_lin = self.nn_lin[n] if n<self.n_layers-1 else None,
-                                      output_padding=output_padding[n])
+            current_layer = Layers[n]([self.channels[n], self.channels[n + 1]],
+                                    kernel_size=self.kernel_size[n],
+                                    dilation=self.dilation[n],
+                                    padding=self.padding[n],
+                                    dropout=self.dropout[n],
+                                    stride=self.stride[n],
+                                    norm=self.norm[n],
+                                    dim=self.dim,
+                                    bias = self.bias,
+                                    nn_lin = self.nn_lin[n] if n<self.n_layers else None,
+                                    output_padding=output_padding[n],
+                                    **self.block_args[n])
             modules.append(current_layer)
         self.conv_modules = nn.Sequential(*tuple(modules))
+        out_channels = self.out_channels
+        if self.dist_module is not None:
+            if hasattr(self.dist_module, "required_channel_upsampling"):
+                out_channels *= self.dist_module.required_channel_upsampling
+        if len(self.kernel_size) == len(self.channels):
+            self.final_conv = layers.conv_hash[self.dim](self.channels[-1], out_channels, self.kernel_size[-1], padding=int(np.floor(self.kernel_size[-1]/2)))
+        else:
+            self.final_conv = layers.conv_hash[self.dim](self.channels[-1], out_channels, 1)
+
 
     def _init_unfold_modules(self):
         # init flattening modules
         if self.target_shape is not None:
             # retrieve output paddings
             current_shape = np.array(self.target_shape[1:])
+            Layers = [getattr(layers, l) for l in self.Layer]
             for n in reversed(range(self.n_layers)):
-                _, current_shape = self.Layer.get_output_padding(current_shape, self.kernel_size[n],
-                                                               self.padding[n], self.dilation[n], self.stride[n])
+                _, current_shape = Layers[n].get_output_padding(current_shape, kernel_size=self.kernel_size[n],
+                                                               padding=self.padding[n], dilation=self.dilation[n], stride=self.stride[n],
+                                                               **self.block_args[n])
+                
         self.flatten_module = None
+        self.reshape_module = None
+        input_shape = (self.channels[0], *([int(i) for i in current_shape]))
         if self.target_shape is not None:
-            assert self.input_size is not None, "if target_shape of ConvEncoder is not None, input_size must not be None"
+            final_shape = tuple(current_shape.tolist())
             if self.reshape_method == "flatten":
-                final_shape = tuple(current_shape.tolist())
-                flatten_shape = int(np.cumprod(current_shape)[-1]) * self.channels[0]
-                self.flatten_module = self.flatten_type(self.input_size, flatten_shape, **self.config_flatten)
-                self.reshape_module = Reshape(self.channels[0], *final_shape)
-            elif self.reshape_method == "reshape":
-                self.reshape_module = Reshape(self.channels[0], *(1,)*self.dim)
+                assert self.input_size, "flattening modules needs the input dimensionality."
+                flatten_module = self.flatten_type(self.input_size, int(np.cumprod(input_shape)[-1]), **self.config_flatten) 
+                reshape_module = Reshape(self.channels[0], *final_shape, incoming_dim=1)
+                self.flatten_module = nn.Sequential(flatten_module, reshape_module)
+            elif self.reshape_method == "channel":
+                kernel_size = np.array(input_shape[1:])
+                padding = kernel_size - 1
+                flatten_module = layers.conv_hash[self.dim](self.channels[0], self.channels[0], tuple(kernel_size), padding=tuple(padding))
+                reshape_module = Reshape(self.channels[0], *final_shape, incoming_dim=self.dim+1)
+                self.flatten_module = nn.Sequential(flatten_module, reshape_module)
+                self.input_size = (self.channels[0], *(1,)*len(final_shape))
+            else:
+                self.flatten_module = Reshape(self.channels[0], *final_shape, incoming_dim=self.dim)
+        if self.input_size is None:
+            self.input_size = input_shape
 
     def forward(self, x: torch.Tensor, seq_shape=None, **kwargs) -> Union[torch.Tensor, dist.Distribution]:
         """
@@ -373,41 +468,16 @@ class DeconvEncoder(nn.Module):
 
         Returns:
             out (torch.Tensor): decoded output
-
         """
-        batch_shape = x.shape[:-1]
+        batch_shape = x.shape[:-len(checktuple(self.input_size))]
         if self.flatten_module is not None:
-            if self.aggregate is not None:
-                x = torch.stack([x]*seq_shape, 1)
-                batch_shape = (*batch_shape, seq_shape)
             x = self.flatten_module(x)
-            if seq_shape:
-                x = self.reshape_module(x, batch_shape=batch_shape)
-            else:
-                x = self.reshape_module(x, batch_shape=batch_shape)
-        else:
-            if self.reshape_module is not None:
-                x = self.reshape_module(x, batch_shape=batch_shape)
-            else:
-                batch_shape = x.shape[-(self.dim+1):]
         x = x.reshape(-1, *x.shape[-(self.dim+1):])
         out = self.conv_modules(x)
+        out = self.final_conv(out)
         out = out.view(*batch_shape, *out.shape[-(self.dim+1):])
-        if issubclass(self.target_dist, dist.Normal):
-            mu, std = out.split(out.shape[1] // 2, dim=1)
-            if self.out_nnlin is not None:
-                mu = self.out_nnlin(mu)
-            #std = std.clamp(-4).exp().sqrt()
-            std = torch.sigmoid(std)
-            out = dist.Normal(mu, std)
-        elif issubclass(self.target_dist, dist.Bernoulli):
-            if self.out_nnlin is not None:
-                out = self.out_nnlin(out)
-            out = dist.Bernoulli(torch.sigmoid(out))
-        elif issubclass(self.target_dist, dist.Categorical):
-            if self.out_nnlin is not None:
-                out = self.out_nnlin(out)
-            out = dist.Categorical(probs=torch.softmax(out, dim=-1))
+        if self.dist_module is not None:
+            out = self.dist_module(out)
         return out
 
 

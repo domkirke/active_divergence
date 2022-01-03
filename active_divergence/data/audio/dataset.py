@@ -11,16 +11,22 @@ from tqdm import tqdm
 from torch.utils.data import Dataset, BatchSampler
 from torch.nn.utils import rnn
 
-def parse_audio_file(f, sr=None, len=None, bitrate=None):
+def parse_audio_file(f, sr=None, len=None, min_len=None, bitrate=None):
     x, f_sr = torchaudio.load(f)
+    if f_sr != sr and sr is not None:
+        x = torchaudio.transforms.Resample(f_sr, sr)(x)
+    else:
+        sr = f_sr
     if len is not None:
         if isinstance(len, float):
-            target_len = int(len * f_sr)
-            x = x[..., :target_len]
+            len = int(len * sr)
+            x = x[..., :len]
         elif isinstance(len, int):
             x = x[..., :len]
-    if f_sr != sr:
-        x = torchaudio.transforms.Resample(f_sr, sr)(x)
+    if min_len is not None:
+        if x.shape[-1] < min_len:
+            pad = torch.zeros((*x.shape[:-1], min_len - x.shape[-1]), device=x.device, dtype=x.dtype)
+            x = torch.cat([x, pad], dim=-1)
     if bitrate is not None:
         current_bitrate = torchaudio.info(f).bits_per_sample
         if current_bitrate != bitrate:
@@ -431,7 +437,7 @@ class AudioDataset(Dataset):
         self.files = files
         self.hash = {self.files[i]:i for i in range(len(self.files))}
 
-    def import_data(self, flatten=False, scale=None, write_transforms=False, save_transform_as=None, force=False):
+    def import_data(self, flatten=False, scale=None, write_transforms=False, save_transform_as=None, min_len=None, force=False):
         """
         Imports data from root directory (must be parsed beforehand)
         Args:
@@ -444,7 +450,7 @@ class AudioDataset(Dataset):
         hash = {}
         running_id = 0
         for i, f in tqdm(enumerate(self.files), total=len(self.files), desc="Importing audio files..."):
-            current_data, current_metadata = parse_audio_file(os.path.abspath(self.root_directory+"/"+f), sr=self.sr, len=self.target_length)
+            current_data, current_metadata = parse_audio_file(os.path.abspath(self.root_directory+"/"+f), sr=self.sr, len=self.target_length, min_len = min_len)
             if len(metadata.keys()) == 0:
                 metadata = {k: [] for k in current_metadata.keys()}
             if flatten:

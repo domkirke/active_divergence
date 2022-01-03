@@ -1,0 +1,55 @@
+data:
+  module: AudioDataModule
+  dataset:
+    root: tests/acidsInstruments-test
+    sr: 44100
+    target_length: &target_length 4.0
+    active_tasks: [pitch, octave, dynamics]
+    sequence:
+      mode: random
+      length: 512
+      idx: -1
+    flatten: 0
+  transforms:
+    transforms: [{type: Mono, squeeze: 1},
+                 {type: MuLaw, args: {channels: &input_channels 256}}]
+  loader:
+    batch_size: 128
+
+model:
+  type: AutoRegressive
+  autoregressive: 
+    type: SampleRNN
+    args: 
+      n_tiers: 3
+      input_size: *input_channels
+      expand_factor: 4
+      dim: 512
+      block_args:
+        type: GRU
+        hidden_size: 512
+        num_layers: 2
+        bias: True
+        nnlin: tanh
+      target_dist: Categorical
+  training:
+    lr: 1.e-4
+    save:
+      path: &dir /slow-1/axel/active_divergence/audio
+      name: &name sample-rnn
+
+  losses:
+    [
+      {type: LogDensity, weight: 1.0},
+    ]
+
+
+callbacks:
+  [
+    { type: LearningRateMonitor, args: {logging_interval: "epoch"} },
+    { type: ModelSummary, args: {max_depth: 1} },
+    { type: ModelCheckpoint, args: {dirpath: *dir, filename: *name, every_n_epochs: 1, save_last: True, epoch_period: 10} },
+    { type: DissectionMonitor, args: {monitor_epochs: 1, embedding_epochs: 10, batch_size: 1024} },
+    { type: AudioReconstructionMonitor, args: {generate_files: 1, n_files: 1} }
+  ]
+      

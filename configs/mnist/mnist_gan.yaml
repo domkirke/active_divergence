@@ -1,0 +1,49 @@
+data:
+  module: MNISTDataModule
+  dataset:
+    binary: 0
+    polarity: bipolar
+  loader:
+    batch_size: 128
+    num_workers: 0
+    shuffle: 1
+
+model:
+  type: GAN
+  generator:
+    type: MLPEncoder
+    args:
+      dims: [512, 256]
+      nnlin: ReLU
+      norm: batch
+      out_nnlin: Tanh
+  discriminator:
+    type: MLPEncoder
+    args:
+      dims: [512,256]
+      dropout: 0.2
+      norm: batch
+      nnlin: LeakyReLU
+      out_nnlin: Sigmoid
+  latent:
+    dim: 128
+    dist: Normal
+  training:
+    balance: [1, 5]
+    margin: 0.0
+    invert: 0
+    lr: [1.e-5, 1.e-5]
+    mode: hinge
+    save:
+      path: &dir /slow-1/axel/active_divergence/mnist
+      name: &name mnist-gan
+
+callbacks:
+  [
+    { type: LearningRateMonitor, args: {logging_interval: "epoch"} },
+    { type: ModelSummary, args: {max_depth: 1} },
+    { type: ModelCheckpoint, args: {dirpath: *dir, filename: *name, every_n_epochs: 1, save_last: True, epoch_period: 10} },
+    { type: DissectionMonitor, args: {monitor_epochs: 1, embedding_epochs: 10} },
+    { type: ImgReconstructionMonitor }
+  ]
+

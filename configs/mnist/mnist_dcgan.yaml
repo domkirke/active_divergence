@@ -1,0 +1,69 @@
+data:
+  module: MNISTDataModule
+  dataset:
+    binary: 0
+    polarity: bipolar
+  loader:
+    batch_size: 128
+    num_workers: 16
+    shuffle: 1
+
+model:
+  type: GAN
+#  generator:
+#    type: MLPEncoder
+#    args:
+#      dims: [512, 256]
+#      nnlin: ReLU
+#      out_nnlin: Tanh
+#  discriminator:
+#    type: MLPEncoder
+#    args:
+#      dims: [512,256]
+#      nnlin: LeakyReLU
+#      out_nnlin: Sigmoid
+  discriminator:
+    type: ConvEncoder
+    args:
+      channels: [128,128,64]
+      dilation: [1, 1, 1]
+      stride: [2,2,2]
+      kernel_size: [3,3,3]
+      norm: batch
+      dropout: 0.2
+      nn_lin: LeakyReLU
+      out_nnlin: Sigmoid
+      bias: False
+  generator:
+    type: DeconvEncoder
+    args: 
+      channels: [128,128,64]
+      dilation: [1, 1, 1]
+      stride: [2,2,2]
+      kernel_size: [3,3,3]
+      norm: batch
+      bias: False
+      nn_lin: ReLU
+      out_nnlin: Tanh
+      #reshape_method: none
+  latent:
+    dim: 128
+    dist: Normal
+  training:
+    #balance: [1, 1]
+    margin: 0.0
+    invert: 0
+    lr: [1.e-5, 1.e-5]
+    save:
+      path: &dir /slow-1/axel/active_divergence/mnist
+      name: &name mnist-gan
+
+callbacks:
+  [
+    { type: LearningRateMonitor, args: {logging_interval: "epoch"} },
+    { type: ModelSummary, args: {max_depth: 1} },
+    { type: ModelCheckpoint, args: {dirpath: *dir, filename: *name, every_n_epochs: 1, save_last: True, epoch_period: 10} },
+    { type: DissectionMonitor, args: {monitor_epochs: 1, embedding_epochs: 10} },
+    { type: ImgReconstructionMonitor }
+  ]
+
