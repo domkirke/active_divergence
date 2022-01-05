@@ -13,22 +13,25 @@ class AutoEncoder(pl.LightningModule):
         super().__init__()
         config = config or OmegaConf.create()
         if isinstance(config, dict):
-            config = OmegaConf(config)
+            config = OmegaConf.create(config)
         # latent config
         config.latent = config.get('latent') or latent
         self.latent = config.latent
         # architecture
         config.encoder = config.get('encoder') or encoder
         config.encoder.args = config.encoder.get('args', {})
-        config.encoder['args']['input_dim'] = config.get('input_dim') or kwargs.get('input_dim')
-        config.encoder['args']['target_shape'] = config.latent.dim
+        if config.encoder['args']['input_dim'] is None:
+            config.encoder['args']['input_dim'] = config.get('input_dim') or kwargs.get('input_dim')
+        if config.encoder['args']['target_shape'] is None:
+            config.encoder['args']['target_shape'] = config.latent.dim
         config.encoder['args']['target_dist'] = config.latent.dist
         encoder_type = config.encoder.type or "MLPEncoder"
         self.encoder = getattr(encoders, encoder_type)(config.encoder.args)
         config.decoder = config.get('decoder', decoder)
         config.decoder.args = config.decoder.get('args', {})
         config.decoder.args.input_dim = config.latent.dim
-        config.decoder.args.target_shape = config.get('input_dim') or kwargs.get('input_dim')
+        if config.decoder.args.get('input_dim') is None:
+            config.decoder.args.target_shape = config.get('input_dim') or kwargs.get('input_dim')
         decoder_type = config.decoder.type or "MLPDecoder"
         self.decoder = getattr(encoders, decoder_type)(config.decoder.args)
 
