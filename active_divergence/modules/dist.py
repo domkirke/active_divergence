@@ -39,7 +39,8 @@ class MLPNormal(nn.Module):
         mu, std = out.split(out.shape[-1]//2, dim=dim)
         if self.out_nnlin:
             mu = self.out_nnlin(mu)
-        std = torch.sigmoid(std) + 1e-6
+        std = torch.sigmoid(std-3) + 1e-6
+        #std = torch.sqrt(torch.exp(std) + 1e-6)
         return dist.Normal(mu, std)
 
 
@@ -58,7 +59,8 @@ class ConvNormal(nn.Module):
         mu, std = out.split(out.shape[dim]//2, dim=dim)
         if self.out_nnlin:
             mu = self.out_nnlin(mu)
-        std = torch.sigmoid(std) + 1e-6
+        std = torch.sigmoid(std - 3) + 1e-6
+        #std = torch.sqrt(torch.exp(std) + 1e-6)
         return dist.Normal(mu, std)
 
 class MLPCategorical(nn.Module):

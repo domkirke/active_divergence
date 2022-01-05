@@ -51,8 +51,8 @@ class Unsqueeze(nn.Module):
 
 from .activations import *
 from .dist import *
-from .layers import conv_hash, deconv_hash, gated_conv_hash, gated_deconv_hash, GatedConv1d, GatedConv2d, GatedConv3d, \
-    GatedConvTranspose1d, GatedConvTranspose2d, GatedConvTranspose3d, GatedMLPLayer, MLP, GRU, RNN
+from .conv import *
+from .layers import *
 from .encoders import MLPEncoder, MLPDecoder, ConvEncoder, DeconvEncoder
 from .inversion import MCNN
 from .oneshots import *

@@ -199,7 +199,7 @@ class ConvEncoder(nn.Module):
 
     def _init_conv_modules(self):
         modules = []
-        self.pre_conv = layers.conv_hash[self.dim](self.input_size[0], self.channels[0], 1)
+        self.pre_conv = layers.conv_hash['conv'][self.dim](self.input_size[0], self.channels[0], 1)
         for n in range(self.n_layers):
             Layer = getattr(layers, self.Layer[n])
             current_layer = Layer([self.channels[n], self.channels[n+1]],
@@ -421,9 +421,9 @@ class DeconvEncoder(nn.Module):
             if hasattr(self.dist_module, "required_channel_upsampling"):
                 out_channels *= self.dist_module.required_channel_upsampling
         if len(self.kernel_size) == len(self.channels):
-            self.final_conv = layers.conv_hash[self.dim](self.channels[-1], out_channels, self.kernel_size[-1], padding=int(np.floor(self.kernel_size[-1]/2)))
+            self.final_conv = layers.conv_hash['conv'][self.dim](self.channels[-1], out_channels, self.kernel_size[-1], padding=int(np.floor(self.kernel_size[-1]/2)))
         else:
-            self.final_conv = layers.conv_hash[self.dim](self.channels[-1], out_channels, 1)
+            self.final_conv = layers.conv_hash['conv'][self.dim](self.channels[-1], out_channels, 1)
 
 
     def _init_unfold_modules(self):

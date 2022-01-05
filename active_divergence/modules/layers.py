@@ -3,10 +3,10 @@ sys.path.append('../')
 import torch, torch.nn as nn
 import numpy as np
 from active_divergence.modules import calculate_gain, layers, norm
-from active_divergence.utils import checklist, checktuple, print_stats
+from active_divergence.modules import conv as conv
+from active_divergence.utils import checklist, checktuple
 from collections import OrderedDict
 from typing import Union, Tuple, List, Iterable, Callable, NoReturn, Type
-from torch.nn.common_types import _size_1_t, _size_2_t, _size_3_t
 
 DEFAULT_NNLIN = "ELU"
 dropout_hash = {1: nn.Dropout, 2:nn.Dropout2d, 3:nn.Dropout3d}
@@ -15,84 +15,21 @@ bn_hash = {1: nn.BatchNorm1d, 2: nn.BatchNorm2d, 3: nn.BatchNorm3d}
 in_hash = {1: nn.InstanceNorm1d, 2: nn.InstanceNorm2d, 3: nn.InstanceNorm3d}
 pixel_hash = {1: norm.PixelNorm1d, 2: norm.PixelNorm2d, 3: norm.PixelNorm3d}
 norm_hash = {'batch':bn_hash, 'instance':in_hash, 'pixel': pixel_hash}
-conv_hash = {1: nn.Conv1d, 2: nn.Conv2d, 3: nn.Conv3d}
-deconv_hash = {1: nn.ConvTranspose1d, 2:nn.ConvTranspose2d, 3:nn.ConvTranspose3d}
+conv_hash = {'conv':{1: conv.Conv1d, 2: conv.Conv2d, 3: conv.Conv3d},
+             'weighted':{1: conv.WeightedConv1d, 2: conv.WeightedConv2d, 3: conv.WeightedConv3d}}
+deconv_hash = {'conv': {1: conv.ConvTranspose1d, 2:conv.ConvTranspose2d, 3:conv.ConvTranspose3d}, 
+               'weighted': {1: conv.WeightedConvTranspose1d, 2: conv.WeightedConvTranspose2d, 3: conv.WeightedConvTranspose3d},
+               'mod': {2: conv.ModConvTranspose2d}}
 pooling_hash = {'avg': {1: nn.AvgPool1d, 2: nn.AvgPool2d, 3: nn.AvgPool3d},
                 'max': {1: nn.MaxPool1d, 3: nn.MaxPool2d, 3: nn.MaxPool3d}}
-
-class GatedConv(nn.Module):
-    conv_hash = conv_hash
-    def __init__(self, in_channels: int, out_channels: int, kernel_size: _size_1_t, stride: _size_1_t = 1, dim: int =None, nn_lin=None, 
-                 padding: _size_1_t = 0, dilation: _size_1_t = 1, groups: int = 1, bias: bool = True, padding_mode: str = 'zeros', **kwargs):
-        """
-        The Gated Convolutional Module uses two different convolutional operators, one used for features and one used
-        for masking.
-        (must not be used directly : instantiate GatedConv1d, GatedConv2d, or GatedConv3d instead)
-        Args:
-            in_channels: input channels
-            out_channels: output channels
-            kernel_size: kernel size
-            stride: stride
-            dim: input dimensionality
-            padding: padding
-            dilation: dilation
-            groups: groups
-            bias: bias
-            padding_mode: padding mode (default: 'zeros')
-        """
-
-        super(GatedConv, self).__init__()
-        self.conv_module = self.conv_hash[dim](in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
-                                     dilation=dilation, groups=groups, bias=bias, padding_mode=padding_mode, **kwargs)
-        self.gated_module = self.conv_hash[dim](in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding,
-                                     dilation=dilation, groups=groups, bias=False, padding_mode=padding_mode, **kwargs)
-        if isinstance(nn_lin, str):
-            self.nn_lin = getattr(nn, nn_lin)
-        elif isinstance(nn_lin, nn.Module):
-            self.nn_lin = nn_lin
-        else:
-            self.nn_lin = None
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if self.nn_lin is not None:
-            return self.nn_lin(self.conv_module(x)) * torch.sigmoid(self.gated_module(x))
-        else:
-            return self.conv_module(x) * torch.sigmoid(self.gated_module(x))
-
-class GatedConv1d(GatedConv):
-    def __init__(self, *args, **kwargs):
-        super(GatedConv1d, self).__init__(*args, dim=1, **kwargs)
-
-class GatedConv2d(GatedConv):
-    def __init__(self, *args, **kwargs):
-        super(GatedConv2d, self).__init__(*args, dim=2, **kwargs)
-
-class GatedConv3d(GatedConv):
-    def __init__(self, *args, **kwargs):
-        super(GatedConv3d, self).__init__(*args, dim=3, **kwargs)
-
-class GatedConvTranspose(GatedConv):
-    conv_hash = deconv_hash
-
-class GatedConvTranspose1d(GatedConvTranspose):
-    def __init__(self, *args, **kwargs):
-        super(GatedConvTranspose1d, self).__init__(*args, dim=1, **kwargs)
-
-class GatedConvTranspose2d(GatedConvTranspose):
-    def __init__(self, *args, **kwargs):
-        super(GatedConvTranspose2d, self).__init__(*args, dim=2, **kwargs)
-
-class GatedConvTranspose3d(GatedConvTranspose):
-    def __init__(self, *args, **kwargs):
-        super(GatedConvTranspose3d, self).__init__(*args, dim=3, **kwargs)
-
 
 class ConvLayer(nn.Module):
     conv_hash = conv_hash
     def __init__(self, channels: Tuple[int, int],
                  kernel_size: Union[List[int], int] = 7, stride: Union[List[int], int] = 1, dim: int = 2,
                  nn_lin: str = DEFAULT_NNLIN, norm: bool = None, padding: Union[List[int], int] = None,
-                 dilation: Union[List[int], int] = 1, dropout: float = None, bias: bool = True, **kwargs):
+                 dilation: Union[List[int], int] = 1, dropout: float = None, bias: bool = True, 
+                 conv_class = "conv", **kwargs):
         """
         Stackable convolutional layer.
         Args:
@@ -116,35 +53,37 @@ class ConvLayer(nn.Module):
         self.dilation = np.array(checklist(dilation, n=dim))
         self.stride = np.array(checklist(stride, n=dim))
         self.dim = dim
+        self.bias = bias
+        self.conv_class = conv_class
         if kwargs.get('output_padding') is not None:
             kwargs['output_padding'] = tuple(checklist(kwargs['output_padding'].tolist()))
 
         # init module
-        self.conv = self.conv_hash[dim](in_channels=self.channels[0],
-                                         out_channels=self.channels[1],
-                                         kernel_size=tuple(self.kernel_size.tolist()),
-                                         stride=tuple(self.stride.tolist()),
-                                         padding=tuple(self.padding.tolist()),
-                                         dilation =tuple(self.dilation.tolist()),
-                                         bias=bias if bias is not None else False,
-                                         **kwargs)
+        self._init_modules(self.conv_class, **kwargs)
         if dropout is not None:
             self.dropout = dropout_hash[dim](dropout)
         if norm is not None and norm != "none":
             self.norm = norm_hash[norm][dim](channels[1])
         if nn_lin is not None:
             self.activation= getattr(nn, nn_lin)()
-        self._init_modules()
 
-    def _init_modules(self) -> NoReturn:
-        nn.init.normal_(self.conv.weight, 0.0, 0.02)
+    def _init_modules(self, conv_class, **kwargs) -> NoReturn:
+        self.conv = self.conv_hash[conv_class][self.dim](in_channels=self.channels[0],
+                                         out_channels=self.channels[1],
+                                         kernel_size=tuple(self.kernel_size.tolist()),
+                                         stride=tuple(self.stride.tolist()),
+                                         padding=tuple(self.padding.tolist()),
+                                         dilation =tuple(self.dilation.tolist()),
+                                         bias=self.bias if self.bias is not None else False,
+                                         **kwargs)
+
+        nn.init.xavier_normal_(self.conv.weight)
         if self.conv.bias is not None:
             nn.init.zeros_(self.conv.bias)
         if hasattr(self, "norm"):
             if isinstance(self.norm, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
-                nn.init.normal_(self.norm.weight, 1.0, 0.02)
+                nn.init.xavier_normal_(self.norm.weight)
                 nn.init.zeros_(self.norm.bias)
-        
 
     def input_shape(self, output_dim: Union[Iterable[int], int])->np.ndarray:
         """
@@ -172,9 +111,9 @@ class ConvLayer(nn.Module):
             input_dim = np.array(checklist(input_dim))
         return np.floor((input_dim + 2*self.padding - self.dilation * (self.kernel_size - 1) - 1)/self.stride + 1)
 
-    def forward(self, x: torch.Tensor, mod_closure=None)->torch.Tensor:
+    def forward(self, x: torch.Tensor, mod_closure=None, **kwargs)->torch.Tensor:
         """Performs convolution."""
-        out = self.conv(x)
+        out = self.conv(x, **kwargs)
         if hasattr(self, "dropout"):
             out = self.dropout(out)
         if hasattr(self, "norm"):
@@ -184,7 +123,6 @@ class ConvLayer(nn.Module):
         if hasattr(self, "activation"):
             out = self.activation(out)
         return out
-
 
 class DeconvLayer(ConvLayer):
     conv_hash = deconv_hash
@@ -259,46 +197,59 @@ class DeconvLayer(ConvLayer):
         out_shape = np.floor((output_dim + 2*self.padding - self.output_padding - self.dilation * (self.kernel_size - 1) - 1)/self.stride + 1)
         return out_shape
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         """Performs convolution."""
-        return super(DeconvLayer, self).forward(x)
-
-
-gated_conv_hash = {1: GatedConv1d, 2:GatedConv2d, 3:GatedConv3d}
-gated_deconv_hash = {1: GatedConvTranspose1d, 2:GatedConvTranspose2d, 3:GatedConvTranspose3d}
+        return super(DeconvLayer, self).forward(x, **kwargs)
 
 class GatedConvLayer(ConvLayer):
-    conv_hash = gated_conv_hash
-    def _init_modules(self):
-        nn.init.xavier_normal_(self.conv.conv_module.weight)
-        nn.init.xavier_normal_(self.conv.gated_module.weight)
-        if self.conv.conv_module.bias is not None:
-            nn.init.zeros_(self.conv.conv_module.bias)
-        if self.conv.gated_module.bias is not None:
-            nn.init.zeros_(self.conv.gated_module.bias)
+    conv_hash = conv_hash
+
+    def __init__(self, *args, nn_lin="Tanh", **kwargs):
+        super(GatedConvLayer, self).__init__(*args, nn_lin=nn_lin, **kwargs)
+    
+    def _init_modules(self, conv_class, **kwargs):
+        super(GatedConvLayer, self).init_modules(conv_class, **kwargs)
+        self.gate_conv = conv_hash[conv_class][self.dim](in_channels=self.channels[0],
+                                         out_channels=self.channels[1],
+                                         kernel_size=tuple(self.kernel_size.tolist()),
+                                         stride=tuple(self.stride.tolist()),
+                                         padding=tuple(self.padding.tolist()),
+                                         dilation =tuple(self.dilation.tolist()),
+                                         bias=self.bias if self.bias is not None else False,
+                                         **kwargs)
+        nn.init.normal_(self.gate_conv.weight, 0.0, 0.02)
+        if self.gate_conv.bias is not None:
+            nn.init.zeros_(self.gate_conv.bias)
+        if hasattr(self, "norm"):
+            if isinstance(self.norm, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
+                nn.init.normal_(self.norm.weight, 1.0, 0.02)
+                nn.init.zeros_(self.norm.bias)
+
+    def forward(self, x: torch.Tensor, mod_closure=None, **kwargs)->torch.Tensor:
+        out = self.conv(x, **kwargs); gate_out = self.gate_conv(x, **kwargs)
+        if hasattr(self, "dropout"):
+            out = self.dropout(out)
+            gate_out = self.dropout(gate_out)
+        if hasattr(self, "norm"):
+            out = self.norm(out)
+        if mod_closure is not None:
+            out = mod_closure(out)
+        if hasattr(self, "activation"):
+            out = self.activation(out)
+        return out * torch.sigmoid(gate_out)
 
 class GatedDeconvLayer(DeconvLayer):
-    conv_hash = gated_deconv_hash
-    def _init_modules(self):
-        nn.init.xavier_normal_(self.conv.conv_module.weight)
-        nn.init.xavier_normal_(self.conv.gated_module.weight)
-        if self.conv.conv_module.bias is not None:
-            nn.init.zeros_(self.conv.conv_module.bias)
-        if self.conv.gated_module.bias is not None:
-            nn.init.zeros_(self.conv.gated_module.bias)
-
-
+    conv_hash = deconv_hash
 
 
 ## Convolutional Blocks for specific applications
 
 # Upsampling / Pooling blocks for progressive GANs
 class UpsamplingConvBlock(nn.Module):
-    def __init__(self, channels, *args, upsample=2, n_convs_per_block=2, up_pos="first", **kwargs):
+    def __init__(self, channels, *args, upsample=2, n_convs_per_block=2, up_pos="first", mode="bilinear", **kwargs):
         super().__init__()
         modules = []
-
-        self.upsample = nn.Upsample(scale_factor=upsample)
+        self.upsample = nn.Upsample(scale_factor=upsample, mode=mode)
         if up_pos == "first":
             modules.append(self.upsample)
         for n in range(n_convs_per_block):
@@ -341,10 +292,15 @@ class UpsamplingConvBlock(nn.Module):
             out_shape = out_shape / downsample
         return output_padding, out_shape
 
+# StyleGAN2-like upsampling 
+class ModUpsamplingBlock(UpsamplingConvBlock):
+    def __init__(self, channels, *args, conv_class = "mod", n_convs_per_block = 2, **kwargs):
+        super(ModUpsamplingBlock, self).__init__(channels, *args, conv_class=conv_class, n_convs_per_block=n_convs_per_block, **kwargs)
+
 
 # WaveNet blocks for TCNs
 class WaveNetBlock(nn.Module):
-    default_layer = GatedConv1d
+    default_layer = GatedConvLayer
     def __init__(self, dilation_channels=32, residual_channels=32, skip_channels=32, kernel_size=2, 
                  layer=None, n_convs_per_block=9, nnlin="Tanh", bias=False, dilation_rate=2, snap="right", **kwargs) -> None:
         super().__init__()

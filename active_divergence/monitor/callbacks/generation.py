@@ -113,8 +113,8 @@ class AudioReconstructionMonitor(Callback):
             ax[i].plot(x_original[i], 'b', linewidth=1)
             if isinstance(x_out, dist.Normal):
                 mean = x_out.mean[i].squeeze().cpu(); std = x_out.stddev[i].squeeze().cpu()
-                ax[i].plot(mean, c="g", linewidth=0.5)
-                ax[i].fill_between(mean-std, mean+std, color="g", alpha=0.4)
+                ax[i].plot(mean, c="g", linewidth=0.7)
+                ax[i].fill_between(np.arange(mean.shape[-1]), mean-std, mean+std, color="g", alpha=0.2)
             else:
                 ax[i].plot(x_out[i].squeeze().cpu())
         return fig

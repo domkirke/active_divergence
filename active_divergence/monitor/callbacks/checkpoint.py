@@ -2,7 +2,7 @@ from pytorch_lightning import callbacks
 import sys; sys.path.append('../')
 import pdb
 from active_divergence.utils import checkdir
-
+from pytorch_lightning.trainer.states import RunningStage
 class ModelCheckpoint(callbacks.ModelCheckpoint):
     def __init__(self, dirpath=None, filename=None, epoch_period=None, **kwargs):
         dirpath += f"/{filename}"
@@ -11,8 +11,9 @@ class ModelCheckpoint(callbacks.ModelCheckpoint):
         if self.epoch_period is not None:
             checkdir(self.dirpath+"/epochs")
 
-    def save_checkpoint(self, trainer):
-        super(ModelCheckpoint, self).save_checkpoint(trainer)
+    def on_epoch_end(self, trainer, pl_module):
+        if trainer.state.stage == RunningStage.SANITY_CHECKING:
+            return
         if self.epoch_period is not None:
             if trainer.current_epoch % self.epoch_period == 0:
                 filepath = f"{self.dirpath}/epochs/{self.filename}_{self.STARTING_VERSION}_{trainer.current_epoch}{self.FILE_EXTENSION}"

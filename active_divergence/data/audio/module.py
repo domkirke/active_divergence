@@ -51,10 +51,11 @@ class AudioDataModule(LightningDataModule):
         if dataset_args.get('check_folder'):
             dataset.check_audio_folder()
 
+        pre_transforms = transforms.ComposeAudioTransform()
         if transform_args.get('pre_transforms'):
             name = transform_args.get('name')
             if name in dataset.available_transforms and (not transform_args.force):
-                dataset.import_transform(name)
+                pre_transforms = dataset.import_transform(name)
             else:
                 assert name is not None
                 pre_transforms = parse_transforms(transform_args.pre_transforms) or transforms.AudioTransform()
@@ -67,6 +68,7 @@ class AudioDataModule(LightningDataModule):
             dataset.flatten_data(int(dataset_args['flatten']))
         # import and scale transform
         current_transforms = parse_transforms(transform_args.get('transforms'))
+        self.full_transforms = pre_transforms + current_transforms
         if dataset_args.get('scale') is not None and current_transforms.needs_scaling:
             try: 
                 scale = int(dataset_args.get('scale'))

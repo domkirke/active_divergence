@@ -48,8 +48,16 @@ class AutoEncoder(pl.LightningModule):
         return next(self.parameters()).device
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.config.training.lr or 1e-3)
-        return optimizer
+        optimizer_config = self.config.training.get('optimizer', {'type':'Adam'})
+        optimizer_args = optimizer_config.get('args', {'lr':1e-4})
+        optimizer = getattr(torch.optim, optimizer_config['type'])(self.parameters(), **optimizer_args)
+        if self.config.training.get('scheduler'):
+            scheduler_config = self.config.training.get('scheduler')
+            scheduler_args = scheduler_config.get('args', {})
+            scheduler = getattr(torch.optim.lr_scheduler, scheduler_config.type)(optimizer, **scheduler_args)
+            return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "loss/valid"}
+        else:
+            return optimizer
 
     def encode(self, x):
         return self.forward(x)

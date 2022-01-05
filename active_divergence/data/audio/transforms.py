@@ -326,12 +326,12 @@ class MuLaw(AudioTransform):
 
 
 class Normalize(AudioTransform):
-    def __init__(self, mode="minmax", scale="bipolar"):
+    def __init__(self, mode="minmax", scale="bipolar", max=None):
         super(Normalize, self).__init__()
         self.mode = mode or "minmax"
         self.polarity = scale or "bipolar"
         self.mean = None
-        self.max = None
+        self.max = max
 
     def __repr__(self):
         return f"Normalize(mode={self.mode}, scale={self.scale})"
@@ -340,19 +340,20 @@ class Normalize(AudioTransform):
     def needs_scaling(self):
         return self.mean is None or self.max is None
 
-    @staticmethod
-    def get_stats(data, mode="gaussian", polarity="bipolar"):
+    def get_stats(self, data, mode="gaussian", polarity="bipolar"):
         if mode == "minmax":
             if polarity == "bipolar":
                 mean = (torch.max(data) - torch.sign(torch.min(data))*torch.min(data)) / 2
                 max = torch.max(torch.abs(data - mean))
             elif polarity == "unipolar":
-                mean = torch.min(data); max = torch.max(torch.abs(data))
+                mean = torch.min(data); 
+            max = torch.max(torch.abs(data)) if self.max is None else self.max
         elif mode == "gaussian":
             if polarity=='bipolar':
                 mean = torch.mean(data); max = torch.std(data)
             if polarity=='unipolar':
-                mean = torch.min(data); max = torch.std(data)
+                mean = torch.min(data); 
+                max = torch.std(data) if self.max is None else torch.std(data) * self.max
         return mean, max
 
     def scale(self, data):
@@ -501,6 +502,7 @@ class STFT(AudioTransform):
                 out = self.griffin_lim(x.transpose(-2, -1))
             elif self.backend == "tifresi":
                 stft = GaussTF(hop_size=self.hop_size, stft_channels=self.nfft)
+                x = x.clamp(0, None)
                 if x.ndim > 2:
                     batch_shape = x.shape[:-2]
                     x = [torch.from_numpy(stft.idgt(x_tmp.numpy().T)) for x_tmp in x.view(-1, *x.shape[-2:])]
