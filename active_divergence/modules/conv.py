@@ -112,34 +112,37 @@ class WeightedConvTranspose3d(ConvTranspose3d):
 
 eps = 1e-9
 class ModConvTranspose2d(ConvTranspose2d):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, mod_input=None, noise_amp=1.0, **kwargs):
         super(ModConvTranspose2d, self).__init__(*args, **kwargs)
-        self.affine_module = nn.Linear(args[0], args[0])
-        self.noise_weight = torch.Parameter(nn.ones(1, args[1], 1, 1))
+        in_channels = mod_input or kwargs.get('in_channels')
+        self.affine_module = nn.Linear(in_channels, kwargs['in_channels'])
+        self.noise_weight = nn.Parameter(torch.ones(1, kwargs["out_channels"], 1, 1))
+        self.noise_amp = noise_amp
     
     @property
     def std_dims(self):
-        return (2, 3)
+        return (1, 3, 4)
 
     def _expand_mod(self, mod):
-        return mod.view(mod.shape[0], 1, mod.shape[1], 1, 1)
+        return mod.view(mod.shape[0], mod.shape[1], 1, 1, 1)
     def _expand_demod(self, demod):
-        return demod.view(demod.shape[0], demod.shape[1], 1, 1, 1)
+        return demod.view(demod.shape[0], 1, demod.shape[1], 1, 1)
 
     def _get_modulated_weight(self, input, mod):
         if mod is None:
-            mod = torch.zeros(input.shape[0], input.shape[1]).to(input.device)
+            mod = torch.zeros(input.shape[0], self.affine_module.weight.shape[1]).to(input.device)
         mod = self.affine_module(mod)
         mod = self.weight.unsqueeze(0) * self._expand_mod(mod)
-        mod_std = self._expand_demod((mod.sum(*self.std_dims) + eps).sqrt())
+        mod_std = self._expand_demod((mod.pow(2).sum(self.std_dims) + eps).sqrt())
         return mod / mod_std
 
-    def _get_bias(self, input, noise):
-        bias = torch.zeros(self.weight.shape[0]).to(input.device)
+    def _get_bias(self, out, noise):
         if noise is not None:
-            bias = bias + noise * self.noise_weight
+            bias = self.noise_weight * noise
+        else:
+            bias = self.noise_amp * self.noise_weight * torch.randn(out.shape[0], self.weight.shape[1], 1, 1).to(out.device)
         if self.bias is not None:
-            bias = bias + self.bias
+            bias = bias + self.bias.unsqueeze(0)
         return bias
 
     def forward(self, input: Tensor, mod: Tensor = None, noise: Tensor=None, output_size: Optional[List[int]] = None) -> Tensor:
@@ -151,10 +154,12 @@ class ModConvTranspose2d(ConvTranspose2d):
         output_padding = self._output_padding(
             input, output_size, self.stride, self.padding, self.kernel_size, self.dilation)  # type: ignore[arg-type]
         weight = self._get_modulated_weight(input, mod)
-        weight = self._get_demodulated_weight(weight)
-        out = nn.functional.conv_transpose2d(
-            input, weight, self.bias, self.stride, self.padding,
-            output_padding, self.groups, self.dilation)
-        bias = self._get_bias(input, noise)
+        #weight = self._get_demodulated_weight(weight)
+        weight = weight.view(weight.shape[0]*weight.shape[1], *weight.shape[2:])
+        input_r = input.view(1, input.shape[0]*input.shape[1], *input.shape[2:])
+        out = nn.functional.conv_transpose2d(input_r, weight, self.bias, self.stride, self.padding, output_padding, input.shape[0], self.dilation)
+        out = out.view(input.shape[0], weight.shape[1], *out.shape[2:])
+        # apply bias
+        bias = self._get_bias(out, noise)
         out = out + bias
-        return bias
+        return out

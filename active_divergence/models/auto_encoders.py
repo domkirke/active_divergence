@@ -20,9 +20,9 @@ class AutoEncoder(pl.LightningModule):
         # architecture
         config.encoder = config.get('encoder') or encoder
         config.encoder.args = config.encoder.get('args', {})
-        if config.encoder['args']['input_dim'] is None:
+        if config.encoder['args'].get('input_dim') is None:
             config.encoder['args']['input_dim'] = config.get('input_dim') or kwargs.get('input_dim')
-        if config.encoder['args']['target_shape'] is None:
+        if config.encoder['args'].get('target_shape') is None:
             config.encoder['args']['target_shape'] = config.latent.dim
         config.encoder['args']['target_dist'] = config.latent.dist
         encoder_type = config.encoder.type or "MLPEncoder"
@@ -31,6 +31,8 @@ class AutoEncoder(pl.LightningModule):
         config.decoder.args = config.decoder.get('args', {})
         config.decoder.args.input_dim = config.latent.dim
         if config.decoder.args.get('input_dim') is None:
+            config.decoder.args.input_dim = config.latent.dim
+        if config.decoder.args.get('target_shape') is None:
             config.decoder.args.target_shape = config.get('input_dim') or kwargs.get('input_dim')
         decoder_type = config.decoder.type or "MLPDecoder"
         self.decoder = getattr(encoders, decoder_type)(config.decoder.args)

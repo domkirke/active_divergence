@@ -56,8 +56,10 @@ class ConvLayer(nn.Module):
         self.bias = bias
         self.conv_class = conv_class
         if kwargs.get('output_padding') is not None:
-            kwargs['output_padding'] = tuple(checklist(kwargs['output_padding'].tolist()))
-
+            if isinstance(kwargs['output_padding'], np.ndarray):
+                kwargs['output_padding'] = tuple(checklist(kwargs['output_padding'].tolist()))
+            else:
+                kwargs['output_padding'] = tuple(checktuple(kwargs['output_padding']))
         # init module
         self._init_modules(self.conv_class, **kwargs)
         if dropout is not None:
@@ -264,7 +266,10 @@ class UpsamplingConvBlock(nn.Module):
     def forward(self, x, **kwargs):
         out = x
         for m in self.module_list:
-            out = m(out)
+            if isinstance(m, (ConvLayer, DeconvLayer)):
+                out = m(out, **kwargs)
+            else:
+                out = m(out)
         return out
 
     def output_shape(self, input_dim):

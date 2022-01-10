@@ -1,14 +1,14 @@
 data:
   module: AudioDataModule
   dataset:
-    root: /fast-1/datasets/VoiceDataset
+    root: /fast-1/datasets/waveform/nsynth-full
     #root: tests/acidsInstruments-test
     sr: 44100
     bitrate: 16
-    min_length: 32768
+    min_length: 16384
     sequence:
       mode: random
-      length: 32768
+      length: 16384
       idx: -1
 
   transforms:
@@ -26,14 +26,13 @@ data:
 
 model:
   type: RAVE
-  warmup: 1
   training:
     lr: 1.e-4
     beta: 1.0
     warmup: 0
     save:
       path: &dir /slow-1/axel/active_divergence/audio
-      name: &name voice_rave
+      name: &name nsynth_rave
 
 
 callbacks:

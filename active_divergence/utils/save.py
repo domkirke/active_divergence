@@ -12,6 +12,7 @@ def save_config(config, data, path, name):
     checkdir(config_path)
     with open(f"{config_path}/{name}.yaml", "w+") as f:
         f.write(OmegaConf.to_yaml(config))
-    with open(f"{config_path}/transforms.ct", 'wb') as f:
-        dill.dump(data.full_transforms, f)
+    if hasattr(data, "full_transforms"):
+        with open(f"{config_path}/transforms.ct", 'wb') as f:
+            dill.dump(data.full_transforms, f)
     

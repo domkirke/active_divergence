@@ -54,7 +54,7 @@ class ConvNormal(nn.Module):
     def required_channel_upsampling(self):
         return 2
 
-    def forward(self, out):
+    def forward(self, out, out_nnlin=None):
         dim = 1 if self.dim is None else -(self.dim + 1)
         mu, std = out.split(out.shape[dim]//2, dim=dim)
         if self.out_nnlin:
