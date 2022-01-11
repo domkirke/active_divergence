@@ -1,15 +1,10 @@
 import argparse, pdb, os, sys
 sys.path.append('../')
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint, ModelSummary
-from active_divergence import data, models, get_callbacks, get_plugins
-from active_divergence.monitor.callbacks import ModelCheckpoint
+from active_divergence import data, models, get_callbacks
 from active_divergence.utils import save_config
 from omegaconf import OmegaConf
-import tensorflow as tf
-import tensorboard as tb
 from active_divergence.utils.misc import checkdir
-tf.io.gfile = tb.compat.tensorflow_stub.io.gfile
 
 # Arguments
 parser = argparse.ArgumentParser()

@@ -83,7 +83,7 @@ class AudioReconstructionMonitor(Callback):
 
     def __init__(self, plot_reconstructions=True, plot_samples=True, 
                  generate_samples=True, generate_files=True, generate_trajs=True,
-                 n_reconstructions=5, n_samples=5, n_files=3,
+                 n_reconstructions=5, n_samples=5, n_files=3, files_path=None,
                  temperature_range=None, monitor_epochs=1, reconstruction_epochs=5,
                  sample_reconstruction=False,
                  traj_file=None, traj_sr = 172):
@@ -91,6 +91,7 @@ class AudioReconstructionMonitor(Callback):
         self.plot_reconstructions = plot_reconstructions
         self.n_reconstructions = n_reconstructions
         self.generate_files = generate_files
+        self.files_path = files_path
         self.generate_trajs = int(generate_trajs or 0)
         self.traj_file = traj_file
         self.traj_sr = traj_sr
@@ -132,7 +133,8 @@ class AudioReconstructionMonitor(Callback):
     def reconstruct_file(self, model, files, dataset):
         originals = []; generations = []
         for f in files:
-            data, meta = dataset.transform_file(f"{dataset.root_directory}/{f}")
+            root_directory = self.files_path or dataset.root_directory
+            data, meta = dataset.transform_file(f"{root_directory}/{f}")
             unsqueezed=False
             if len(data.shape) == 1:
                 data = data.unsqueeze(0)

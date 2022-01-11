@@ -3,12 +3,13 @@ data:
   dataset:
     root: tests/acidsInstruments-test
     sr: 44100
-    bitrate: 8
+    bitrate: 16
     target_length: &target_length 4.0
+    min_length: 32768
     active_tasks: [pitch, octave, dynamics]
     sequence:
       mode: random
-      length: 65536
+      length: 32768
       idx: -1
   transforms: [ {type: Unsqueeze, args: {dim: -2}} ]
   augmentations:

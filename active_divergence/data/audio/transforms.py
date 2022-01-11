@@ -30,6 +30,14 @@ class AudioTransform(object):
     def __repr_(self):
         return "AudioTransform()"
 
+    def __add__(self, transform):
+        if isinstance(transform, ComposeAudioTransform):
+            return ComposeAudioTransform(transforms=[self] + transform.transforms)
+        elif isinstance(transform, AudioTransform):
+            return ComposeAudioTransform(transforms=[self, transform])
+        else:
+            raise TypeError('AudioTransform cannot be added to type: %s'%type(transform))
+
     def __call__(self, x, time=None, *args, **kwargs):
         if time is None:
             return x

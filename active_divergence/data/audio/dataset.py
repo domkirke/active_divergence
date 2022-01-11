@@ -170,7 +170,7 @@ class AudioDataset(Dataset):
 
         # data attributes
         self._pre_transform = AudioTransform()
-        self.transforms = transforms
+        self.transforms = transforms or AudioTransform()
         self.augmentations = augmentations
         self.augment = len(self.augmentations) > 0
         self._drop_time = False
@@ -215,6 +215,7 @@ class AudioDataset(Dataset):
             data, seq_idx = [d[0] for d in data], [d[1] for d in data]
         else:
             data, seq_idx = self._get_item(item, **kwargs)
+        data = checktensor(data)
         # retrieve metadata
         metadata = self._get_item_metadata(item, seq=seq_idx)
         # transform data
@@ -293,6 +294,8 @@ class AudioDataset(Dataset):
                 metadata = torch.Tensor([metadata])
             if seq > 0 and metadata.ndim == 1:
                 return metadata + seq / self.sr
+            elif metadata.ndim == 0:
+                return metadata
             else:
                 return metadata[seq]
 
@@ -309,7 +312,7 @@ class AudioDataset(Dataset):
         if hasattr(seq, "__iter__"):
             metadata = {'time': torch.Tensor([get_time(self.metadata['time'][item], s) for s in seq])}
         else:
-            metadata = {'time': torch.tensor([get_time(self.metadata['time'][item], seq)])}
+            metadata = {'time': torch.tensor(get_time(self.metadata['time'][item], seq))}
         for k in self._active_tasks+['sr']:
             current_meta = self.metadata[k][item]
             if isinstance(current_meta, ContinuousList):
