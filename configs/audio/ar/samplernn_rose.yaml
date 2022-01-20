@@ -1,0 +1,51 @@
+data:
+  module: SingleAudioDataModule
+  dataset:
+    path: samples/rose.wav
+    sr: 44100
+    bitrate: 16
+    chunk_size: 8192
+    n_batches: 256
+  transforms:
+    transforms: [{type: MuLaw, args: {channels: &input_channels 256}}]
+  loader:
+    batch_size: 8
+    num_workers: 16
+
+model:
+  type: AutoRegressive
+  autoregressive: 
+    type: SampleRNN
+    args: 
+      n_tiers: 3
+      input_size: *input_channels
+      expand_factor: 4
+      dim: 512
+      block_args:
+        type: GRU
+        hidden_size: 512
+        num_layers: 2
+        bias: True
+        nnlin: tanh
+      target_dist: Categorical
+  training:
+    lr: 1.e-4
+    save:
+      path: &dir /slow-1/axel/active_divergence/audio
+      name: &name sample-rnn-debug
+
+  losses:
+    [
+      {type: LogDensity, weight: 1.0},
+    ]
+
+
+callbacks:
+  [
+    { type: LearningRateMonitor, args: {logging_interval: "epoch"} },
+    { type: ModelSummary, args: {max_depth: 1} },
+    { type: ModelCheckpoint, args: {dirpath: *dir, filename: *name, every_n_epochs: 1, save_last: True, epoch_period: 1} },
+    { type: DissectionMonitor, args: {monitor_epochs: 1, embedding_epochs: 10, batch_size: 1024} },
+    { type: AudioReconstructionMonitor, args: {generate_files: 0, n_files: 1, batch_size: 8, files_path: /u/repmus/chemla/active_divergence} }
+  ]
+      
