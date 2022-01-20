@@ -13,8 +13,9 @@ from pytorch_lightning.trainer.states import RunningStage
 class AutoRegressive(pl.LightningModule):
     def __init__(self, config=None, autoregressive=None, training=None, losses=None, input_dim=None, **kwargs):
         super().__init__()
-        if config is None:
-            config = OmegaConf.create()
+        config = config or OmegaConf.create()
+        if isinstance(config, dict):
+            config = OmegaConf.create(config)
         config.autoregressive = config.get('autoregressive') or autoregressive
         config.autoregressive.args.input_dim = input_dim
         self.input_dim = input_dim
@@ -76,7 +77,7 @@ class AutoRegressive(pl.LightningModule):
         self.log("loss/valid", loss, prog_bar=True)
         return loss
 
-    def reconstruct(self, x, *args, sample_latent=False, sample_data=False, **kwargs):
+    def reconstruct(self, x, *args, sample_latent=False, sample_data=False, chunk_size=None, **kwargs):
         if isinstance(x, (list, tuple)):
             x, y = x
         x = x.to(self.device)

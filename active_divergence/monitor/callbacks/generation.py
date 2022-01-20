@@ -78,6 +78,17 @@ def check_mono(sgl, normalize=True):
         sgl /= sgl.max()
     return sgl
 
+def fit_data(data, target_shape, has_batch = True):
+    idx_range = range(int(has_batch), len(target_shape))
+    for i in idx_range:
+        if data.shape[i] > target_shape[i]:
+            idx = (slice(None),)*i + (slice(0, target_shape[i]),)
+            data = data.__getitem__(idx)
+        elif data.shape[i] < target_shape[i]:
+            pdb.set_trace()
+            pad_shape = tuple(target_shape[:i]) + (target_shape[i] - data.shape[i],) + tuple(target_shape[i+1:])
+            data = torch.cat([data, torch.zeros(pad_shape).to(data.device)])
+    return data
 
 class AudioReconstructionMonitor(Callback):
 
@@ -86,7 +97,7 @@ class AudioReconstructionMonitor(Callback):
                  n_reconstructions=5, n_samples=5, n_files=3, files_path=None,
                  temperature_range=None, monitor_epochs=1, reconstruction_epochs=5,
                  sample_reconstruction=False,
-                 traj_file=None, traj_sr = 172):
+                 traj_file=None, traj_sr = 172, batch_size=256):
         # reconstruction arguments
         self.plot_reconstructions = plot_reconstructions
         self.n_reconstructions = n_reconstructions
@@ -97,6 +108,7 @@ class AudioReconstructionMonitor(Callback):
         self.traj_sr = traj_sr
         self.n_files = n_files
         self.sample_reconstruction = sample_reconstruction
+        self.batch_size = batch_size
         # sample arguments
         self.plot_samples = plot_samples
         self.generate_samples = generate_samples
@@ -109,15 +121,25 @@ class AudioReconstructionMonitor(Callback):
         data = next(loader(batch_size=self.n_reconstructions).__iter__())
         x_original, x_out = model.reconstruct(data)
         x_original = x_original.squeeze()
-        fig, ax = plt.subplots(len(x_original), 1)
-        for i in range(len(x_original)):
-            ax[i].plot(x_original[i], 'b', linewidth=1)
-            if isinstance(x_out, dist.Normal):
-                mean = x_out.mean[i].squeeze().cpu(); std = x_out.stddev[i].squeeze().cpu()
-                ax[i].plot(mean, c="g", linewidth=0.7)
-                ax[i].fill_between(np.arange(mean.shape[-1]), mean-std, mean+std, color="g", alpha=0.2)
-            else:
-                ax[i].plot(x_out[i].squeeze().cpu())
+        if len(x_original.shape) == 2:
+            fig, ax = plt.subplots(len(x_original), 1)
+            for i in range(len(x_original)):
+                ax[i].plot(x_original[i], 'b', linewidth=1)
+                if isinstance(x_out, dist.Normal):
+                    mean = x_out.mean[i].squeeze().cpu(); std = x_out.stddev[i].squeeze().cpu()
+                    ax[i].plot(mean, c="g", linewidth=0.7)
+                    ax[i].fill_between(np.arange(mean.shape[-1]), mean-std, mean+std, color="g", alpha=0.2)
+                else:
+                    ax[i].plot(x_out[i].squeeze().cpu())
+        elif len(x_original.shape) == 3:
+            fig, ax = plt.subplots(len(x_original), 2)
+            for i in range(len(x_original)):
+                ax[i, 0].imshow(x_original[i], aspect="auto")
+                if isinstance(x_out, dist.Normal):
+                    mean = x_out.mean[i].squeeze().cpu()
+                    ax[i, 1].imshow(mean, aspect="auto")
+                else:
+                    ax[i, 1].imshow(x_out[i].squeeze().cpu(), aspect="auto")
         return fig
 
     def plot_samps(self, model):
@@ -135,10 +157,10 @@ class AudioReconstructionMonitor(Callback):
         for f in files:
             root_directory = self.files_path or dataset.root_directory
             data, meta = dataset.transform_file(f"{root_directory}/{f}")
-            unsqueezed=False
-            if len(data.shape) == 1:
-                data = data.unsqueeze(0)
-                unsqueezed = True
+            if hasattr(model, "input_dim"):
+                data = fit_data(data, model.input_dim, has_batch = False)
+            data = data.unsqueeze(0)
+            unsqueezed = True
             original, generation = model.reconstruct(data) 
             if unsqueezed:
                 original = original[0]; generation = generation[0]

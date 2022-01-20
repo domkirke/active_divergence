@@ -18,3 +18,6 @@ def bias_(parameter, bias=0.0):
 def permute_(parameter, axis=0):
     perm = torch.randperm(parameter.shape[axis])
     parameter.data = parameter.data.index_select(axis, perm)
+
+def cos_(parameter, freq=1.0, phase=0.0):
+    parameter.data = torch.cos(freq * parameter.data + phase)

@@ -56,7 +56,7 @@ def checkdir(directory):
     if not os.path.isdir(directory):
         os.makedirs(directory)
 
-def checktensor(tensor, dtype=None):
+def checktensor(tensor, dtype=None, allow_0d=True):
     if isinstance(tensor, list):
         return [checktensor(t, dtype=dtype) for t in tensor]
     elif isinstance(tensor, tuple):
@@ -66,12 +66,18 @@ def checktensor(tensor, dtype=None):
     elif isinstance(tensor, np.ndarray):
         return torch.from_numpy(tensor).to(dtype=dtype)
     elif torch.is_tensor(tensor):
-        return tensor.to(dtype=dtype)
+        tensor = tensor.to(dtype=dtype)
+        if tensor.ndim == 0 and not allow_0d:
+            tensor = torch.Tensor([tensor])
+        return tensor
     else:
         if hasattr(tensor, "__iter__"):
-            return torch.Tensor(tensor, dtype=dtype)
+            tensor = torch.Tensor(tensor, dtype=dtype)
         else:
-            return torch.tensor(tensor, dtype=dtype)
+            tensor = torch.tensor(tensor, dtype=dtype)
+        if tensor.ndim == 0 and not allow_0d:
+            tensor = torch.Tensor([tensor])
+        return tensor
 
 def checknumpy(tensor):
     if isinstance(tensor, list):

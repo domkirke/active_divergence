@@ -40,7 +40,6 @@ class MLPNormal(nn.Module):
         if self.out_nnlin:
             mu = self.out_nnlin(mu)
         std = torch.sigmoid(std-3) + 1e-6
-        #std = torch.sqrt(torch.exp(std) + 1e-6)
         return dist.Normal(mu, std)
 
 

@@ -20,9 +20,11 @@ def parse_audio_file(f, sr=None, len=None, min_len=None, bitrate=None):
     if len is not None:
         if isinstance(len, float):
             len = int(len * sr)
+        if len < x.shape[-1]:
             x = x[..., :len]
-        elif isinstance(len, int):
-            x = x[..., :len]
+        else:
+            pad = torch.zeros((*x.shape[:-1], len - x.shape[-1]), device=x.device, dtype=x.dtype)
+            x = torch.cat([x, pad], dim=-1)
     if min_len is not None:
         if x.shape[-1] < min_len:
             pad = torch.zeros((*x.shape[:-1], min_len - x.shape[-1]), device=x.device, dtype=x.dtype)
@@ -281,8 +283,13 @@ class AudioDataset(Dataset):
                     else:
                         seq_idx = random.randrange(0, self.data[item].shape[sequence_idx] - sequence_length)
                         idx[sequence_idx] = slice(seq_idx, seq_idx + sequence_length)
+                else:
+                    idx[sequence_idx] = slice(0, sequence_length)
             if is_asynchronous:
-                data, meta = self.data.__getitem__(tuple(idx), return_metadata=True, return_indices=True)
+                try:
+                    data, meta = self.data.__getitem__(tuple(idx), return_metadata=True, return_indices=True)
+                except Exception as e:
+                    pdb.set_trace()
                 #seq_idx = meta['idx'][sequence_idx]
             else:
                 data = self.data.__getitem__(idx)
@@ -290,12 +297,11 @@ class AudioDataset(Dataset):
 
     def _get_item_metadata(self, item: int, seq=None):
         def get_time(metadata, seq):
-            if isinstance(metadata, float):
-                metadata = torch.Tensor([metadata])
+            metadata = checktensor(metadata, allow_0d=False)
             if seq > 0 and metadata.ndim == 1:
                 return metadata + seq / self.sr
             elif metadata.ndim == 0:
-                return metadata
+                return torch.Tensor([metadata])
             else:
                 return metadata[seq]
 
@@ -310,9 +316,9 @@ class AudioDataset(Dataset):
             return compiled_metadata
         seq = seq if seq is not None else slice(None)
         if hasattr(seq, "__iter__"):
-            metadata = {'time': torch.Tensor([get_time(self.metadata['time'][item], s) for s in seq])}
+            metadata = {'time': checktensor([get_time(self.metadata['time'][item], s) for s in seq], allow_0d=False)}
         else:
-            metadata = {'time': torch.tensor(get_time(self.metadata['time'][item], seq))}
+            metadata = {'time': checktensor(get_time(self.metadata['time'][item], seq), allow_0d=False)}
         for k in self._active_tasks+['sr']:
             current_meta = self.metadata[k][item]
             if isinstance(current_meta, ContinuousList):
@@ -394,7 +400,7 @@ class AudioDataset(Dataset):
             dataset.data = lardon.OfflineDataList([self.data.entries[d] for d in item])
         else:
             dataset.data = [self.data[d] for d in item]
-        dataset.metadata = {k: (np.array(v)[item]).tolist() for k, v in self.metadata.items()}
+        dataset.metadata = {k: (np.array(v)[item]) for k, v in self.metadata.items()}
         dataset.files = [self.files[f] for f in item]
         dataset.hash = {}
         for i, f in enumerate(dataset.files):
@@ -560,7 +566,7 @@ class AudioDataset(Dataset):
         if save_as:
             with lardon.LardonParser(self.root_directory+'/data', target_directory, force=force) as parser:
                 for i, d in enumerate(tqdm(self.data, desc="exporting transforms...", total=len(self.data))):
-                    time = torch.tensor(0.) if not "time" in self.metadata['time'] else self.metadata['time'][i]
+                    time = torch.tensor([0.]) if not "time" in self.metadata['time'] else self.metadata['time'][i]
                     new_data, new_time = self._transforms(d, time=time, sr=self.metadata['sr'][i])
                     new_data = checknumpy(new_data)
                     transformed_meta.append({'time':new_time.numpy(), 'sr':self.metadata['sr'][i]})
@@ -578,7 +584,7 @@ class AudioDataset(Dataset):
         else:
             transformed_data = []
             for i, d in enumerate(tqdm(self.data, desc="replacing transforms...", total=len(self.data))):
-                time = torch.tensor(0.) if not "time" in self.metadata['time'] else self.metadata['time'][i]
+                time = torch.tensor([0.]) if not "time" in self.metadata['time'] else self.metadata['time'][i]
                 new_data, new_time = self._transforms(d, time=time, sr=self.metadata['sr'][i])
                 transformed_data.append(new_data)
                 transformed_meta.append({'time': new_time, 'sr': self.metadata['sr'][i]})

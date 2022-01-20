@@ -1,13 +1,17 @@
-import sys, torch, pdb
+import sys, torch, pdb, re
 sys.path.append('../')
 from active_divergence.models.rave.rave import model
 from active_divergence.utils import checklist
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, ListConfig
 
 class RAVE(model.RAVE):
-    def __init__(self, config: OmegaConf = None, **kwargs):
+    def __init__(self, config: OmegaConf = None, checkpoint=None, **kwargs):
         if config is None:
             config = OmegaConf.create()
+        # load keys from external config in case
+        config_checkpoint = config.get('checkpoint') or checkpoint
+        if config_checkpoint:
+            config = self.import_checkpoint_config(config, config_checkpoint)
         dict_config = {}
         dict_config['data_size'] = config.get('data_size', 16)
         dict_config['capacity'] = config.get('capacity', 64)
@@ -21,11 +25,16 @@ class RAVE(model.RAVE):
         dict_config['d_capacity'] = config.get('d_capacity', 16)
         dict_config['d_multiplier'] = config.get('d_multiplier', 4)
         dict_config['d_n_layers'] = config.get('d_n_layers', 4)
-        dict_config['warmup'] = config.get('warmup', 1000000)
-        dict_config['mode']  = config.get('mode', "hinge")
+        dict_config['warmup'] = config.get('warmup') or kwargs.get('warmup', 1000000)
+        dict_config['mode']  = config.get('mode') or kwargs.get('mode', "hinge")
         dict_config['no_latency'] = config.get('no_latency', False)
         dict_config['sr'] = config.get('sr', 44100)
+        # load from checkpoint
         super(RAVE, self).__init__(**dict_config)
+        dict_config['optim_params'] = config.get('optim_params') or kwargs.get('optim_params')
+        self.config = OmegaConf.create(dict_config)
+        if config_checkpoint:
+            self.import_checkpoint(config_checkpoint)
 
     @property
     def device(self):
@@ -35,6 +44,54 @@ class RAVE(model.RAVE):
     def train_dataloader(self):
         return self.trainer.datamodule.train_dataloader
 
+    
+    def import_checkpoint(self, config_checkpoint: OmegaConf):
+        if isinstance(config_checkpoint, ListConfig):
+            for c in config_checkpoint:
+                self.import_checkpoint(c)
+        else:
+            if isinstance(config_checkpoint, str):
+                config_checkpoint = OmegaConf.create({'path': config_checkpoint})
+            model = self.load_from_checkpoint(config_checkpoint.path)
+            model_params = dict(model.named_parameters())
+            model_params_names = list(model_params.keys())
+            if config_checkpoint.get('params'):
+                params_to_import = []
+                for target_params in checklist(config_checkpoint.params):
+                    p = list(filter(lambda x: re.match(target_params, x), model_params_names))
+                    params_to_import.extend(p)
+            else:
+                params_to_import = model_params_names
+            current_params = dict(self.named_parameters())
+            for param_name in params_to_import:
+                if current_params[param_name].shape == model_params[param_name].shape:
+                    print('loading paramater %s from %s...'%(param_name, config_checkpoint.path))
+                    current_params[param_name] = model_params[param_name]
+                else:
+                    print('non-matching shape for parameter %s ; skipping'%param_name)
+            try:
+                self.load_state_dict(current_params, strict=True)
+            except Exception as e:
+                incompatible, unexpected = self.load_state_dict(current_params, strict=False) 
+                if len(incompatible) != 0:
+                    print("Found incompatible keys :", incompatible)
+                if len(unexpected) != 0:
+                    print("Unexpected keys :", unexpected)
+
+    def import_checkpoint_config(self, config: OmegaConf, config_checkpoint: OmegaConf):
+        if isinstance(config_checkpoint, ListConfig):
+            for c in config_checkpoint:
+                self.import_checkpoint_config(config, c)
+        else:
+            if config_checkpoint.get('config'):
+                external_config = OmegaConf.load(config_checkpoint.config)
+                if config_checkpoint.get('config_keys'):
+                    for k in checklist(config_checkpoint.config_keys):
+                        config[k] = external_config.model[k]
+                else:
+                    config = external_config.model
+        return config
+
     def training_step(self, batch, batch_idx):
         x, y = batch
         return super(RAVE, self).training_step(x, batch_idx)
@@ -43,6 +100,34 @@ class RAVE(model.RAVE):
         x, y = batch
         return  super(RAVE, self).validation_step(x, batch_idx)
 
+    def get_parameters(self, parameters=None, model=None, prefix=None):
+        model = model or self
+        if parameters is None:
+            params = list(model.parameters())
+        else:
+            full_params = dict(model.named_parameters())
+            full_params_names = list(full_params.keys())
+            full_params_names_prefix = full_params_names if prefix is None else [f"{prefix}.{n}" for n in full_params_names]
+            params = []
+            for param_regex in parameters:
+                valid_names = list(filter(lambda x: re.match(param_regex, full_params_names_prefix[x]), range(len(full_params_names))))
+                params.extend([full_params[full_params_names[i]] for i in valid_names])
+        return params
+
+    def configure_optimizers(self):
+        gen_p = self.get_parameters(self.config.get('optim_params'), self.encoder, "encoder")
+        gen_p += self.get_parameters(self.config.get('optim_params'), self.decoder, "decoder")
+        dis_p = self.get_parameters(self.config.get('optim_params'), self.discriminator, "discriminator")
+        if len(gen_p) == 0:
+            dis_opt = torch.optim.Adam(dis_p, 1e-4, (.5, .9))
+            return dis_opt
+        elif len(dis_p) == 0:
+            gen_opt = torch.optim.Adam(gen_p, 1e-4, (.5, .9))
+            return gen_opt
+        else:
+            dis_opt = torch.optim.Adam(dis_p, 1e-4, (.5, .9))
+            gen_opt = torch.optim.Adam(gen_p, 1e-4, (.5, .9))
+            return gen_opt, dis_opt
 
     # external methods
     def encode(self, x, *args, **kwargs):

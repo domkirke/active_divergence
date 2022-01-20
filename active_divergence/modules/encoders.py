@@ -167,7 +167,7 @@ class ConvEncoder(nn.Module):
         if self.target_dist:
             self.target_dist = checkdist(self.target_dist)
             if init_modules:
-                self.dist_module = mlp_dist_hash[self.target_dist](out_nnlin=self.out_nnlin, dim=self.dim)
+                self.dist_module = mlp_dist_hash[self.target_dist](out_nnlin=self.out_nnlin)
             self.channels[-1] *= self.dist_module.required_dim_upsampling
         else:
             if init_modules:

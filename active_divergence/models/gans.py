@@ -8,7 +8,6 @@ from active_divergence.utils import checklist, config
 from active_divergence import losses
 from active_divergence.losses import priors
 
-
 def parse_additional_losses(config):
     if config is None:
         return None
@@ -140,10 +139,12 @@ class GAN(pl.LightningModule):
                 self._loss_phase = (self._loss_phase + 1)%2
                 self._loss_counter = 0
 
-    def generate(self, z):
+    def generate(self, x, z):
         return self.generator(z)
 
-    def discriminate(self, x, return_hidden=False):
+    def discriminate(self, x, z, return_hidden=False):
+        if isinstance(x, dist.Distribution):
+            x = x.rsample()
         return self.discriminator(x, return_hidden = return_hidden)
 
     def discriminator_loss(self, discriminator, batch, generation, d_real, d_fake):
@@ -200,7 +201,7 @@ class GAN(pl.LightningModule):
                 for p in discriminator.parameters():
                     p.data.clamp_(-clip_value, clip_value)
 
-    def generator_loss(self, generator, batch, out, d_fake, hidden=None):
+    def generator_loss(self, generator, batch, out, d_fake, z, hidden=None):
         if self.config.training.mode == "adv":
             labels_real = self.get_labels(d_fake, phase=0)
             gen_loss = nn.functional.binary_cross_entropy(d_fake, labels_real)
@@ -226,13 +227,14 @@ class GAN(pl.LightningModule):
         d_opt.zero_grad()
         # generate 
         z = self.sample_prior(batch=batch)
-        out = self.generate(z)
+        out = self.generate(batch, z)
         # update discriminator
         g_loss = d_loss = None
         loss = 0
         if self._loss_phase == 0 or self._loss_phase is None:
-            d_real = self.discriminate(batch)
-            d_fake = self.discriminate(out.detach())
+            d_real = self.discriminate(batch, z)
+            out_disc = out if not isinstance(out, dist.Distribution) else out.sample()
+            d_fake = self.discriminate(out_disc.detach(), z)
             d_loss = self.discriminator_loss(self.discriminator, batch, out, d_real, d_fake)
             loss = loss + d_loss
             self.manual_backward(d_loss)
@@ -241,12 +243,12 @@ class GAN(pl.LightningModule):
         # update generator
         if self._loss_phase == 1 or self._loss_phase is None:
             if self.config.training.get('feature_matching'):
-                d_fake, hidden_fake = self.discriminate(out, return_hidden=True)
-                d_true, hidden_true = self.discriminate(batch, return_hidden=True)
-                g_loss = self.generator_loss(self.generator, batch, out, d_fake, hidden=[hidden_true, hidden_fake])
+                d_fake, hidden_fake = self.discriminate(out, z, return_hidden=True)
+                d_true, hidden_true = self.discriminate(batch, z, return_hidden=True)
+                g_loss = self.generator_loss(self.generator, batch, out, d_fake, z, hidden=[hidden_true, hidden_fake])
             else:
-                d_fake = self.discriminate(out, return_hidden=False)
-                g_loss = self.generator_loss(self.generator, batch, out, d_fake)
+                d_fake = self.discriminate(out, z, return_hidden=False)
+                g_loss = self.generator_loss(self.generator, batch, out, d_fake, z)
             loss = loss + g_loss
             self.manual_backward(g_loss)
             g_opt.step()
@@ -262,14 +264,14 @@ class GAN(pl.LightningModule):
         batch = batch.to(self.device)
         # generate 
         z = self.sample_prior(batch=batch)
-        out = self.generate(z)
+        out = self.generate(batch, z)
         # get discriminator loss
         g_loss = d_loss = None
-        d_real, hidden_real = self.discriminate(batch, return_hidden=True)
-        d_fake, hidden_fake  = self.discriminate(out, return_hidden=True)
+        d_real, hidden_real = self.discriminate(batch, z, return_hidden=True)
+        d_fake, hidden_fake  = self.discriminate(out, z, return_hidden=True)
         d_loss = self.discriminator_loss(self.discriminator, batch, out, d_real, d_fake)
         # get generator loss
-        g_loss = self.generator_loss(self.generator, batch, out, d_fake, hidden=[hidden_real, hidden_fake])
+        g_loss = self.generator_loss(self.generator, batch, out, d_fake, z, hidden=[hidden_real, hidden_fake])
         if g_loss is not None:
             self.log("gen_loss/valid", g_loss.detach().cpu(), prog_bar=True)
         if d_loss is not None:
@@ -295,7 +297,7 @@ class GAN(pl.LightningModule):
 
     def gradient_regularization(self, inputs, labels):
         inputs.requires_grad_(True)
-        d_out = self.discriminate(inputs)
+        d_out = self.discriminate(inputs, None)
         gradients = torch.autograd.grad(outputs=d_out, inputs=inputs, grad_outputs=labels, allow_unused=True, create_graph=True, retain_graph=True, only_inputs=True)[0]
         gradients = gradients.view(gradients.size(0), -1)
         gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
@@ -307,9 +309,11 @@ class GAN(pl.LightningModule):
         data_shape = len(real_samples.shape[1:])
         alpha = torch.rand((*real_samples.shape[:-data_shape], *(1,) * data_shape), device=real_samples.device)
         # Get random interpolation between real and fake samples
+        if isinstance(fake_samples, dist.Distribution):
+            fake_samples = fake_samples.sample()
         interpolates = (alpha * real_samples.detach() + ((1 - alpha) * fake_samples.detach()))
         interpolates.requires_grad_(True)
-        d_interpolates = self.discriminate(interpolates)
+        d_interpolates = self.discriminate(interpolates, None)
         fake = torch.full((real_samples.shape[0], 1) ,1.0, device=real_samples.device)
         # Get gradient w.r.t. interpolates
         gradients = torch.autograd.grad(
@@ -614,7 +618,7 @@ class ModulatedGAN(ProgressiveGAN):
 
     def generator_loss(self, generator, batch, out, d_fake, hidden=None):
         g_loss = super(ModulatedGAN, self).generator_loss(generator, batch, out, d_fake, hidden=hidden)
-        if self.config.training.path_length and g_loss.grad_fn is not None:
+        if self.config.training.get('path_length') and g_loss.grad_fn is not None:
             path_length_penalty = self.path_length_penalty()
             g_loss = g_loss + float(self.config.training.path_penalty) * path_length_penalty
         return g_loss

@@ -18,6 +18,27 @@ class NotInvertibleError(Exception):
     pass
 
 
+def preprocess_signal_stft(y, M=1024, trim=False):
+    """Trim and cut signal.
+    
+    The function ensures that the signal length is a multiple of M.
+    (taken from tifresi library, but with optional trimming)
+    """
+    # Trimming
+    if trim: 
+        y, _ = librosa.effects.trim(y)
+
+    # Preemphasis
+    # y = np.append(y[0], y[1:] - 0.97 * y[:-1])
+
+    # Padding
+    left_over = np.mod(len(y), M)
+    extra = M - left_over
+    y = np.pad(y, (0, extra))
+    assert (np.mod(len(y), M) == 0)
+
+    return y
+
 ## MAIN CLASS
 
 class AudioTransform(object):
@@ -470,10 +491,10 @@ class STFT(AudioTransform):
             if x.ndim > 1:
                 batch_shape = x.shape[:-1]
                 x = x.view(-1, x.shape[-1])
-                x = [torch.from_numpy(stft.dgt(preprocess_signal(x_tmp.numpy(), self.nfft)).T) for x_tmp in x]
+                x = [torch.from_numpy(stft.dgt(preprocess_signal_stft(x_tmp.numpy(), self.nfft)).T) for x_tmp in x]
                 out = torch.stack(x).reshape(*batch_shape, -1, x[0].shape[0]).transpose(-2, -1)
             else:
-                out = torch.from_numpy(stft.dgt(preprocess_signal(x.numpy(), self.nfft)).T)
+                out = torch.from_numpy(stft.dgt(preprocess_signal_stft(x.numpy(), self.nfft)).T)
 
         if time is not None:
             new_time = self.get_time(out, time, self.sr)

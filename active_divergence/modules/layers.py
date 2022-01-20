@@ -210,7 +210,7 @@ class GatedConvLayer(ConvLayer):
         super(GatedConvLayer, self).__init__(*args, nn_lin=nn_lin, **kwargs)
     
     def _init_modules(self, conv_class, **kwargs):
-        super(GatedConvLayer, self).init_modules(conv_class, **kwargs)
+        super(GatedConvLayer, self)._init_modules(conv_class, **kwargs)
         self.gate_conv = conv_hash[conv_class][self.dim](in_channels=self.channels[0],
                                          out_channels=self.channels[1],
                                          kernel_size=tuple(self.kernel_size.tolist()),
