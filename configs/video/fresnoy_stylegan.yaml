@@ -1,19 +1,18 @@
 data:
   module: VideoDataModule
   dataset:
-    root_directory: /Volumes/Canard/Datasets/Fresnoy
-#    flatten: -2
+    root_directory: /fast-2/datasets/destruction
 #    sequence:
 #      length: 1
 #      idx: -2
     flatten: True
   transforms:
-    transforms: [{type: CenterCrop, args:[[640,420]], kwargs: {}},
+    transforms: [{type: CenterCrop, args:[[512,512]], kwargs: {}},
                  {type: Normalize, args: [0., 1.]},
                  {type: Dequantize, kwargs: {range: [0, 255]}}]
   loader:
-    batch_size: 64
-    num_workers: 16
+    batch_size: 4
+    #num_workers: 1
     shuffle: 1
 
 model:
@@ -22,8 +21,8 @@ model:
     type: ConvEncoder
     args:
       layer: DownsamplingConvBlock
-      channels: [32,32,32,32,32]
-      kernel_size: [5,5,5,5]
+      channels: [16,16,16,16,16,16,16,16]
+      kernel_size: [5,5,5,5,5,5,5,5]
       nn_lin: LeakyReLU
       out_nnlin: Sigmoid
       norm: pixel
@@ -47,8 +46,8 @@ model:
     args:
       layer: ModUpsamplingBlock
       #channels: [8,16,32,64,128]
-      channels: [16,16,16,16,16]
-      kernel_size: [5,5,5,5]
+      channels: [16,16,16,16,16,16,16,16]
+      kernel_size: [5,5,5,5,5,5,5,5]
       norm: pixel
       bias: False
       mode: skip
@@ -57,7 +56,7 @@ model:
         upsample: 2
         n_convs_per_block: 1
       nn_lin: LeakyReLU
-      out_nnlin: Sigmoid
+      out_nnlin: Tanh 
       reshape_method: channel
   latent:
     dist: Normal
@@ -76,7 +75,7 @@ model:
     #training_schedule: [2,2,2,2]
     #transition_schedule: [1, 1, 1, 1, 1]
     save:
-      path: &dir saves/
+      path: &dir /slow-1/axel/active_divergence/video
       name: &name style-gan
 
 callbacks:

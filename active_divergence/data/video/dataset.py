@@ -1,4 +1,4 @@
-import numpy as np, torch, torchvision as tv, os, dill, re, random
+import numpy as np, torch, torchvision as tv, os, dill, re, random, pdb
 from torch.utils.data import Dataset
 from active_divergence.utils.misc import checklist
 
@@ -51,8 +51,11 @@ class VideoDataset(Dataset):
                 start = timestamps[0]; end = timestamps[-1]
             else:
                 start = timestamps
-                end = timestamps+1
+                end = timestamps
         data, _, _ = tv.io.read_video(f"{self.root_directory}/data/{self.files[item]}", start, end)
+        if start == end:
+            if data.shape[0] != 1:
+                data = data[0][np.newaxis]
         data = data.permute(0, 3, 1, 2)
         if data.shape[0] == 1:
             data = data[0]

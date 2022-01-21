@@ -386,7 +386,7 @@ class ProgressiveGAN(GAN):
             #    generation = self.generator.toRGB_modules[self._current_phase](generation)
         return generation
 
-    def discriminate(self, x):
+    def discriminate(self, x, z):
         if self._transition == 1:
             alpha = self._get_mixing_factor()
             """
@@ -455,8 +455,8 @@ class ProgressiveGAN(GAN):
 
         g_loss = d_loss = None
         if self._loss_phase == 0 or self._loss_phase is None:
-            d_real = self.discriminate(batch)
-            d_fake = self.discriminate(out.detach())
+            d_real = self.discriminate(batch, z)
+            d_fake = self.discriminate(out.detach(), z)
             d_loss = self.discriminator_loss(self.current_discriminator, batch, out, d_real, d_fake)
             d_opt.zero_grad()
             self.manual_backward(d_loss)
@@ -464,8 +464,8 @@ class ProgressiveGAN(GAN):
             self.regularize_discriminator(self.current_discriminator, d_real, d_fake, d_loss)
         # update generator
         if self._loss_phase == 1 or self._loss_phase is None:
-            d_fake = self.discriminate(out)
-            g_loss = self.generator_loss(self.current_generator, batch, out, d_fake)
+            d_fake = self.discriminate(out, z)
+            g_loss = self.generator_loss(self.current_generator, batch, out, d_fake, z)
             g_opt.zero_grad()
             self.manual_backward(g_loss)
             g_opt.step()
@@ -487,11 +487,11 @@ class ProgressiveGAN(GAN):
         if self._current_phase is not None and self._current_phase != len(self.config.training.training_schedule):
             batch = self._get_discriminator_downsamples(self._current_phase)(batch)
         g_loss = d_loss = None
-        d_real = self.discriminate(batch)
-        d_fake = self.discriminate(out)
+        d_real = self.discriminate(batch, z)
+        d_fake = self.discriminate(out, z)
         d_loss = self.discriminator_loss(self.current_discriminator, batch, out, d_real, d_fake)
         # get generator loss
-        g_loss = self.generator_loss(self.current_generator, batch, out, d_fake)
+        g_loss = self.generator_loss(self.current_generator, batch, out, d_fake, z)
         if g_loss is not None:
             self.log("gen_loss/valid", g_loss.detach().cpu(), prog_bar=True)
         if d_loss is not None:
@@ -616,8 +616,8 @@ class ModulatedGAN(ProgressiveGAN):
             #    generation = self.generator.toRGB_modules[self._current_phase](generation)
         return generation
 
-    def generator_loss(self, generator, batch, out, d_fake, hidden=None):
-        g_loss = super(ModulatedGAN, self).generator_loss(generator, batch, out, d_fake, hidden=hidden)
+    def generator_loss(self, generator, batch, out, d_fake, z, hidden=None):
+        g_loss = super(ModulatedGAN, self).generator_loss(generator, batch, out, d_fake, z, hidden=hidden)
         if self.config.training.get('path_length') and g_loss.grad_fn is not None:
             path_length_penalty = self.path_length_penalty()
             g_loss = g_loss + float(self.config.training.path_penalty) * path_length_penalty

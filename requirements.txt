@@ -19,4 +19,5 @@ ltfatpy
 tifresi
 mdct
 GPUtil
+av
 git+https://github.com/caillonantoine/cached_conv.git#egg=cached_conv
