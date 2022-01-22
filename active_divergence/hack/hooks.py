@@ -1,7 +1,4 @@
-from email.errors import InvalidMultipartContentTransferEncodingDefect
 import pdb, torch, torch.nn as nn, re
-from webbrowser import get
-
 hooks_dict = {}
 
 def apply_hooks(module, input):
@@ -20,7 +17,7 @@ def record_hook(module, module_name, hook_function):
             else:
                 a, index = list_index.groups()
                 module = getattr(module, a).__getitem__(int(index))
-            if hasattr(module, "__getitem__"):
+            if isinstance(module, nn.ModuleList):
                 [record_hook(m, ".".join(attributes[i+1:]), hook_function) for m in module]
     if id(module) in hooks_dict:
         hooks_dict[id(module)].append(hook_function)
