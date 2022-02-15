@@ -7,7 +7,7 @@ def check_file(file, types):
 
 class VideoDataset(Dataset):
     types = [".mp4", ".mov"]
-    def __init__(self, root_directory, transforms=None, augmentations=[], flatten=None, refresh=False):
+    def __init__(self, root_directory, transforms=None, augmentations=[], flatten=None, refresh=False, **kwargs):
         self.root_directory = root_directory
         self.transforms = transforms
         self.augmentations = augmentations
@@ -41,11 +41,16 @@ class VideoDataset(Dataset):
         timestamps = self.metadata['timestamps'][item]
         if sequence_mode is not None:
             if sequence_mode == "random":
-                start = random.randrange(0, len(timestamps) - sequence_length)
+                try:
+                    start = random.randrange(0, len(timestamps) - sequence_length)
+                except:
+                    pdb.set_trace()
                 end = start + sequence_length
             elif sequence_mode == "start":
                 start = 0
                 end = sequence_length
+            start = timestamps[start]
+            end = timestamps[end]
         else:
             if hasattr(timestamps, "__iter__"):
                 start = timestamps[0]; end = timestamps[-1]
@@ -94,7 +99,7 @@ class VideoDataset(Dataset):
         self.files = files
         self.metadata = {'timestamps': [metadata_video['timestamps'][f] for f in files],
                          'fps': [metadata_video['fps'][f] for f in files]}
-        self.hash = {f: i for f, i in enumerate(self.files)}
+        self.hash = {i: f for f, i in enumerate(self.files)}
 
     def load_timestamps(self, filename):
         with open(filename, 'rb') as f:
@@ -104,6 +109,7 @@ class VideoDataset(Dataset):
         for f in self.files:
             self.metadata['fps'].append(video_info['fps'][f])
             self.metadata['timestamps'].append(video_info['timestamps'][f])
+        self.hash = {i: f for f, i in enumerate(self.files)}
 
     def flatten_data(self):
         files = []
@@ -168,6 +174,8 @@ class VideoDataset(Dataset):
             item = np.array([item])
         elif isinstance(item, str):
             item = self.partitions[item]
+            if isinstance(item[0], str):
+                item = sum([self.hash[i] for i in item], [])
 
         dataset = type(self)(self.root_directory, transforms=self.transforms, augmentations=self.augmentations)
         dataset.metadata = {k: (np.array(v)[item]).tolist() for k, v in self.metadata.items()}

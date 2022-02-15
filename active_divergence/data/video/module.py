@@ -2,7 +2,7 @@ import os, sys, pdb
 from typing import Type
 sys.path.append('..')
 import torch, torchvision as tv
-from active_divergence.data.video import VideoDataset
+from active_divergence.data.video import VideoDataset, dataset
 from active_divergence.utils import Config, checklist
 from torch.utils.data import random_split, DataLoader
 from pytorch_lightning import LightningDataModule
@@ -40,6 +40,13 @@ def parse_augmentations(augmentation_list):
         current_augmentations.append(augmentation_tmp)
     return current_augmentations
 
+
+class VideoDataLoader(DataLoader):
+    def __iter__(self, *args, **kwargs):
+        for x, y in super().__iter__():
+            x = x.squeeze(0)
+            yield x, y
+
 class VideoDataModule(LightningDataModule):
     def __init__(self, config, **kwargs):
         super().__init__()
@@ -49,6 +56,7 @@ class VideoDataModule(LightningDataModule):
         self.augmentation_args = config.get('augmentations', [])
         self.loader_args = config.get('loader', {})
         self.partition_balance = config.get('partition_balance', [0.8, 0.2])
+        self.single_file = config.get('single_file', True)
         self.dataset = None
         self.train_dataset = None
         self.valid_dataset = None
@@ -68,7 +76,6 @@ class VideoDataModule(LightningDataModule):
         # set sequence export
         if dataset_args.get('sequence'):
             dataset.drop_sequences(dataset_args['sequence'].get('length'),
-                                   dataset_args['sequence'].get('idx', -2),
                                    dataset_args['sequence'].get('mode', "random"))
         return dataset
 
@@ -80,18 +87,20 @@ class VideoDataModule(LightningDataModule):
 
     @property
     def shape(self):
-        return tuple(self.dataset[0][0].shape)
-
+        if self.single_file:
+            return tuple(self.dataset[0][0].shape[1:])
+        else:
+            return tuple(self.dataset[0][0].shape)
     # return the dataloader for each split
     def train_dataloader(self, **kwargs):
         loader_args = {**self.loader_args, **kwargs}
-        loader_train = DataLoader(self.train_dataset, **loader_args)
+        loader_train = VideoDataLoader(self.train_dataset, **loader_args)
         return loader_train
 
     def val_dataloader(self, batch_size=None, **kwargs):
         loader_args = {**self.loader_args, **kwargs}
         loader_args['batch_size'] = batch_size or loader_args.get('batch_size', 128)
-        loader_val = DataLoader(self.valid_dataset, **loader_args)
+        loader_val = VideoDataLoader(self.valid_dataset, **loader_args)
         return loader_val
 
     def test_dataloader(self, batch_size=None, **kwargs):
@@ -99,6 +108,6 @@ class VideoDataModule(LightningDataModule):
             return None
         loader_args = {**self.loader_args, **kwargs}
         loader_args['batch_size'] = batch_size or loader_args.get('batch_size', 128)
-        loader_test = DataLoader(self.test_dataset, **loader_args)
+        loader_test = VideoDataLoader(self.test_dataset, **loader_args)
         return loader_test
 

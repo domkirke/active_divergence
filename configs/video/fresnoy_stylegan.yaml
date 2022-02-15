@@ -1,18 +1,18 @@
 data:
   module: VideoDataModule
   dataset:
-    root_directory: /fast-2/datasets/destruction
-#    sequence:
-#      length: 1
-#      idx: -2
-    flatten: True
+    root_directory: /fast-1/datasets/destruction512
+#    flatten: True
+    sequence:
+      length: 16
+      idx: -2
   transforms:
-    transforms: [{type: CenterCrop, args:[[512,512]], kwargs: {}},
-                 {type: Normalize, args: [0., 1.]},
+    transforms: [{type: Normalize, args: [0., 1.]},
                  {type: Dequantize, kwargs: {range: [0, 255]}}]
+
   loader:
-    batch_size: 4
-    #num_workers: 1
+    batch_size: 1
+    #num_workers: 8
     shuffle: 1
 
 model:
@@ -21,7 +21,7 @@ model:
     type: ConvEncoder
     args:
       layer: DownsamplingConvBlock
-      channels: [16,16,16,16,16,16,16,16]
+      channels: [16,16,16,16,16,16,16,16,16]
       kernel_size: [5,5,5,5,5,5,5,5]
       nn_lin: LeakyReLU
       out_nnlin: Sigmoid
@@ -30,7 +30,7 @@ model:
       mode: forward+
       block_args:
         downsample: 2
-        n_convs_per_block: 1
+        n_convs_per_block: 2
       reshape_method: flatten
       target_shape: 1
   encoder:
@@ -46,7 +46,7 @@ model:
     args:
       layer: ModUpsamplingBlock
       #channels: [8,16,32,64,128]
-      channels: [16,16,16,16,16,16,16,16]
+      channels: [16,16,16,16,16,16,16,16,16]
       kernel_size: [5,5,5,5,5,5,5,5]
       norm: pixel
       bias: False
@@ -54,7 +54,7 @@ model:
       block_args:
         mod_input: *mod_input
         upsample: 2
-        n_convs_per_block: 1
+        n_convs_per_block: 2
       nn_lin: LeakyReLU
       out_nnlin: Tanh 
       reshape_method: channel
@@ -68,12 +68,12 @@ model:
     mode: "adv"
     #wgan_clip: 0.02
     lr: [5.e-5, 5.e-5]
-    r1: 1.0
+    #r1: 1.0
     #path_length: 1.0
-    training_schedule: [100,100,100]
-    transition_schedule: [50,50,50,50]
-    #training_schedule: [2,2,2,2]
-    #transition_schedule: [1, 1, 1, 1, 1]
+    #training_schedule: [2,2,2,2,2,2,2]
+    #transition_schedule: [1,1,1,1,1,1,1,1]
+    training_schedule: [100, 100, 100, 100, 100, 100, 100]
+    transition_schedule: [50, 50, 50, 50, 50, 50, 50, 50]
     save:
       path: &dir /slow-1/axel/active_divergence/video
       name: &name style-gan
