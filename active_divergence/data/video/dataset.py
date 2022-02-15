@@ -1,6 +1,6 @@
-import numpy as np, torch, torchvision as tv, os, dill, re, random, pdb
+import numpy as np, torch, torchvision as tv, os, dill, re, random, pdb, tqdm, lardon
 from torch.utils.data import Dataset
-from active_divergence.utils.misc import checklist
+from active_divergence.utils.misc import checklist, checknumpy, checkdir
 
 def check_file(file, types):
     return os.path.splitext(file)[1] in types and os.path.basename(file[0]) != "."
@@ -11,6 +11,7 @@ class VideoDataset(Dataset):
         self.root_directory = root_directory
         self.transforms = transforms
         self.augmentations = augmentations
+        self.data = None
         self.files = []
         self.metadata = {}
         self.hash = {}
@@ -72,7 +73,10 @@ class VideoDataset(Dataset):
             metadata[k] = v[item]
             if seq is not None:
                 if hasattr(metadata[k], "__iter__"):
-                    metadata[k] = metadata[k][seq[0]:seq[1]]
+                    if seq[0] == seq[1]:
+                        metadata[k] = metadata[k][seq[0]:seq[1]+1]
+                    else:
+                        metadata[k] = metadata[k][seq[0]:seq[1]]
         return metadata
 
     def drop_sequences(self, length, mode="random"):
@@ -111,11 +115,62 @@ class VideoDataset(Dataset):
             self.metadata['timestamps'].append(video_info['timestamps'][f])
         self.hash = {i: f for f, i in enumerate(self.files)}
 
-    def flatten_data(self):
+    def write_transforms(self, path=None, force=False):
+        """
+        Write transforms in place, parsing the files to the target transform using lardon.
+        Note : dataset should not be flattened, providing degenerated lardon pickling.
+        :param name: transform name
+        :param selector:
+        :return:
+        """
+        checkdir(path)
+        checkdir(f"{path}/data")
+        for i, d in enumerate(tqdm.tqdm(self.files, desc="exporting transforms...", total=len(self.files))):
+            new_data = self.transforms(self._get_item(i)[0])
+            new_data = new_data.permute(0, 2, 3, 1)
+            current_path = f"{path}/data/{self.files[i]}"
+            checkdir(os.path.dirname(current_path))
+            tv.io.write_video(current_path, new_data, fps = self.metadata['fps'][i])
+        with open(f"{path}/transforms.ct", 'wb') as f:
+            dill.dump(self.transforms, f)
+        save_dict = self.get_attributes()
+        with open(f"{path}/dataset.ct", "wb") as f:
+            dill.dump(save_dict, f)
+        with open(f"{path}/timestamps.ct", "wb") as f:
+            dill.dump({'timestamps': self.metadata['timestamps'], 'fps': self.metadata['fps']}, f)
+        self.transforms = None
+        self.root_directory = path
+
+    def import_transform(self, transform):
+        assert transform in self.available_transforms
+        target_directory = f"{self.root_directory}/transforms/{transform}"
+        if len(self.files) > 0:
+            files = [os.path.splitext(f)[0] + lardon.lardon_ext for f in self.files]
+        else:
+            files = None
+        self.data, self.metadata = lardon.parse_folder(target_directory, drop_metadata=True, files=files)
+        with open(target_directory+'/transforms.ct', 'rb') as f:
+            original_transform = dill.load(f)
+        with open(target_directory + '/dataset.ct', 'rb') as f:
+            save_dict = dill.load(f)
+            self.load_dict(save_dict)
+        self._pre_transform = original_transform
+        return original_transform
+
+    def get_attributes(self):
+        return {'metadata': self.metadata}
+
+    def load_dict(self, save_dict):
+        self.metadata = save_dict['metadata']
+
+    def flatten_data(self, axis=0):
         files = []
         metadata = {k: [] for k in self.metadata.keys()}
         hash = {f: [] for f in self.files}
+        data = []
         for i, f in enumerate(self.files):
+            if self.data is not None:
+                data.extend(self.data.entries[i].scatter(axis))
             file_len = len(self.metadata['timestamps'][i])
             hash[f].extend(list(range(len(files), len(files)+file_len)))
             files.extend([f]*file_len)
@@ -128,6 +183,8 @@ class VideoDataset(Dataset):
         self.files = files
         self.metadata = metadata
         self.hash = hash
+        if self.data is not None:
+            self.data = lardon.OfflineDataList(data)
 
     def make_partitions(self, names, balance, from_files=True):
         """
