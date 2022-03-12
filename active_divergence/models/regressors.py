@@ -17,7 +17,7 @@ class Regressor(pl.LightningModule):
         config.regressor.args.input_dim = input_dim
         self.regressor = getattr(oneshots, config.regressor.type)(config.regressor.args)
         config.training = config.get('training') or training
-        # save config and hyperparameters
+        # save configs and hyperparameters
         self.config = config
         self.save_hyperparameters(dict(self.config))
 

@@ -192,9 +192,9 @@ class Mono(AudioTransform):
             if self.mode == "mix":
                 x = (x.sum(self.dim) / 2)[np.newaxis]
             elif self.mode == "right":
-                x = x.index_select(torch.tensor(1), self.dim).unsqueeze(self.dim)
+                x = x.index_select(self.dim, torch.tensor(1))
             elif self.mode == "left":
-                x = x.index_select(torch.tensor(0), self.dim).unsqueeze(self.dim)
+                x = x.index_select(self.dim, torch.tensor(0))
         if self.normalize:
             x = x / x.max()
         if self.squeeze:

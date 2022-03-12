@@ -5,12 +5,12 @@ from active_divergence.utils import checklist
 from omegaconf import OmegaConf, ListConfig
 
 class RAVE(model.RAVE):
-    def __init__(self, config: OmegaConf = None, checkpoint=None, **kwargs):
+    def __init__(self, config: OmegaConf = None, checkpoint=None, transfer=None, **kwargs):
         if config is None:
             config = OmegaConf.create()
-        # load keys from external config in case
+        # load keys from external configs in case
         config_checkpoint = config.get('checkpoint') or checkpoint
-        if config_checkpoint:
+        if config_checkpoint and transfer:
             config = self.import_checkpoint_config(config, config_checkpoint)
         dict_config = {}
         dict_config['data_size'] = config.get('data_size', 16)
@@ -33,7 +33,7 @@ class RAVE(model.RAVE):
         super(RAVE, self).__init__(**dict_config)
         dict_config['optim_params'] = config.get('optim_params') or kwargs.get('optim_params')
         self.config = OmegaConf.create(dict_config)
-        if config_checkpoint:
+        if config_checkpoint and transfer:
             self.import_checkpoint(config_checkpoint)
 
     @property
@@ -83,7 +83,7 @@ class RAVE(model.RAVE):
             for c in config_checkpoint:
                 self.import_checkpoint_config(config, c)
         else:
-            if config_checkpoint.get('config'):
+            if config_checkpoint.get('configs'):
                 external_config = OmegaConf.load(config_checkpoint.config)
                 if config_checkpoint.get('config_keys'):
                     for k in checklist(config_checkpoint.config_keys):

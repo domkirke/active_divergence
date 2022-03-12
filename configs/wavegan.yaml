@@ -1,0 +1,59 @@
+name: ??
+rundir: "${dir:runtime}/saves/${name}"
+
+hydra:
+  job:
+    name: "${name}"
+  run:
+    dir: "${rundir}"
+  sweep:
+    dir: "${dir:runtime}/saves/${name}"
+    subdir: "${base:${data.dataset.root}}"
+
+defaults:
+  - data:
+    - defaults
+  - model: gan
+  - callbacks: audio_defaults
+  - _self_
+
+data:
+  transforms:
+    name: resampled_16k
+    pre_transforms:
+      - {type: Mono, args:{mode: left}}
+  augmentations:
+    - {type: Dequantize}
+  dataset:
+    sr: 16000
+    bitrate: 16
+    sequence:
+      length: 1024
+      mode: random
+      idx: -1
+
+# here we add specific parameters for the decoder's output (softplus + normal distribution).
+model:
+  discriminator:
+    args:
+      norm: none
+  generator:
+    args:
+      out_nnlin: Tanh
+      norm: none
+      block_args:
+        upsample: 2
+        mode: linear
+        n_convs_per_block: 2
+  latent:
+    dim: 128
+    dist: Normal
+  training:
+    mode: wasserstein
+    gp: 10.0
+
+pl_trainer:
+  max_epochs: 1e5
+  limit_train_batches: 1
+  limit_val_batches: 1
+

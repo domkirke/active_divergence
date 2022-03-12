@@ -161,25 +161,7 @@ class SampleRNN(nn.Module):
             h = self.rnn_modules[n](input_h.reshape(x.shape[0], -1, x_t.shape[-1]), return_hidden=False)
             h = h.reshape(*x.shape[:2], -1, h.shape[-1])
 
-        """
-        # second-tier activations
-        x_t = x.view(np.prod(x.shape[:2]), x.shape[-2], x.shape[-1])
-        x_t = torch.stack([frame(x_tmp, self.expand_factor, self.expand_factor, dim=0) for x_tmp in x_t])
-        x_t = x_t[..., int(self.context_block_size / self.expand_factor - 1):, :, :]
-        x_t = self.input_linear_modules[0](x_t)
-        h_t = h_toptier.unsqueeze(-2).repeat_interleave(self.expand_factor, dim=-2)
-        input_h = x_t.reshape(x.shape[0], x.shape[1], *x_t.shape[1:]) + h_t
-        h_middletier = self.rnn_modules[1](input_h.reshape(x.shape[0], -1, x_t.shape[-1]), return_hidden=False).reshape(*x.shape[:2], -1, x_t.shape[-1])
-        # final tier activation
-        x_t = x.view(np.prod(x.shape[:2]), x.shape[-2], x.shape[-1])
-        x_t = torch.stack([frame(x_tmp, self.expand_factor, 1, dim=0) for x_tmp in x_t])
-        x_t = x_t[..., int(x.shape[-2]/2 - self.expand_factor):, :, :]
-        x_t = self.input_linear_modules[1](x_t)
-        h_t = h_middletier.repeat_interleave(self.expand_factor, dim=-2)
-        input_h = x_t.reshape(x.shape[0], x.shape[1], *x_t.shape[1:]) + h_t
-        h_final = self.rnn_modules[2](input_h.reshape(x.shape[0], -1, x_t.shape[-1]), return_hidden=False).reshape(*x.shape[:2], -1, x_t.shape[-1])
-        """
-        # output layer
+
         out = self.final_module(h)
         out = out.view(x.shape[0], out.shape[-3]*out.shape[-2], out.shape[-1])
         out = self.dist_module(out)

@@ -51,7 +51,6 @@ class Unsqueeze(nn.Module):
 
 from .activations import *
 from .dist import *
-from .conv import *
 from .layers import *
 from .encoders import MLPEncoder, MLPDecoder, ConvEncoder, DeconvEncoder
 from .inversion import MCNN

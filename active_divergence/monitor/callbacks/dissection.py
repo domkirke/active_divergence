@@ -4,7 +4,6 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import Callback
 from pytorch_lightning.trainer.states import RunningStage, TrainerFn, TrainerState, TrainerStatus
 
-
 def update_dict(memory, new_dict):
     for k, v in new_dict.items():
         if k in memory.keys():
@@ -13,13 +12,27 @@ def update_dict(memory, new_dict):
             memory[k] = [v]
     return memory
 
+def reduce_dict(dic):
+    reduced_dict = {}
+    for k, v in dic.items():
+        if isinstance(v, dict):
+            reduced_dict = {**reduced_dict, **reduce_dict(v)}
+        else:
+            reduced_dict = {**reduced_dict, **{f"{k}/{k_tmp}": v_tmp for k_tmp, v_tmp in v.items()}}
+    return reduced_dict
+
 def accumulate_traces(traces):
     trace_dict = {}
     if "histograms" in traces[0].keys():
         trace_dict['histograms'] = {}
         hist_keys = traces[0]['histograms'].keys()
         for k in hist_keys:
-            trace_dict['histograms'][k] = torch.cat([v['histograms'][k] for v in traces])
+            if isinstance(traces[0]['histograms'][k], dict):
+                current_dict = {k_tmp: torch.cat([v['histograms'][k][k_tmp] for v in traces]) for k_tmp in traces[0]['histograms'][k].keys()}
+                for k_tmp, v_tmp in current_dict.items():
+                    trace_dict['histograms'][f"{k}/{k_tmp}"] = v_tmp
+            else:
+                trace_dict['histograms'][k] = torch.cat([v['histograms'][k] for v in traces])
     if "embeddings" in traces[0].keys():
         trace_dict['embeddings'] = {}
         emb_keys = traces[0]['embeddings'].keys()
@@ -28,10 +41,17 @@ def accumulate_traces(traces):
     return trace_dict
 
 
-
 class DissectionMonitor(Callback):
 
     def __init__(self, n_batches=5, batch_size=1024, monitor_epochs=1, embedding_epochs=10):
+        """
+        Callback for monitoring and dissecting the model's guts.
+        Args:
+            n_batches (int): number of batches (default: 5)
+            batch_size (int): batch size (default: 1024)
+            monitor_epochs (int): monitoring period in epochs (default: 1)
+            embedding_epochs (int): embedding plot period in epochs (default: 10)
+        """
         self.n_batches = n_batches
         self.batch_size = batch_size
         self.monitor_epochs = monitor_epochs
@@ -44,19 +64,18 @@ class DissectionMonitor(Callback):
             if trainer.current_epoch % self.monitor_epochs != 0:
                 return
             # plot model parameters distribution
-            trace = {}
             for k, v  in trainer.model.named_parameters():
                 trainer.logger.experiment.add_histogram("params/"+k, v, global_step=trainer.current_epoch)
             n_batch = 0
             traces = []
-            if not hasattr(trainer.model, "trace_from_inputs"):
+            if not hasattr(trainer.model, "trace"):
                 return 
             loader = trainer.datamodule.train_dataloader(batch_size=self.batch_size, drop_last=False)
             for i, data in enumerate(loader):
                 # weird bug occuring with padded_convs when batch size is irregular.
                 if i == len(loader) - 1:
                     break
-                trace_out = trainer.model.trace_from_inputs(data)
+                trace_out = trainer.model.trace(data)
                 n_batch += 1
                 traces.append(trace_out)
                 if n_batch > self.n_batches:
@@ -64,10 +83,8 @@ class DissectionMonitor(Callback):
 
             if len(traces) != 0:
                 trace = accumulate_traces(traces)
-                # add outputs
                 for k, v in trace.get('histograms', {}).items():
                     trainer.logger.experiment.add_histogram(k, v, global_step = trainer.current_epoch)
-
                 if trainer.current_epoch % self.embedding_epochs == 0:
                     for k, v in trace.get('embeddings', {}).items():
                         label_img = None; metadata = None

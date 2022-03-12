@@ -10,6 +10,8 @@ import torch, torchaudio, os, dill, re, numpy as np, matplotlib.pyplot as plt, r
 from tqdm import tqdm
 from torch.utils.data import Dataset, BatchSampler
 from torch.nn.utils import rnn
+from typing import Union, Iterable, Tuple
+from omegaconf import OmegaConf
 
 def parse_audio_file(f, sr=None, len=None, min_len=None, bitrate=None):
     x, f_sr = torchaudio.load(f)
@@ -52,37 +54,10 @@ def import_classes(f):
     classes['_length'] = len(classes.keys())
     return classes
 
-def format_array(arr, sequence_idx):
-    if isinstance(arr, list):
-        return [format_array(a, sequence_idx) for a in arr]
-    elif isinstance(arr, np.ndarray):
-        arr = torch.from_numpy(arr)
-    elif torch.is_tensor(arr):
-        pass
-    else:
-        arr = torch.Tensor(arr)
-    if sequence_idx != 1:
-        permute_idx = list(range(len(arr.shape)))
-        del permute_idx[sequence_idx]
-        arr = arr.permute(sequence_idx, *permute_idx).contiguous()
-    return arr
-
-def get_seq_range(datas, metas, seq_index=0):
-    if isinstance(datas, list):
-        return [get_seq_range(datas[i], metas[i], seq_index=seq_index) for i in range(len(datas))]
-    current_idx = metas['idx'][seq_index]
-    if isinstance(current_idx, slice):
-        seq_range = torch.arange(current_idx.start or 0,
-                                 current_idx.stop or datas.shape[seq_index])
-    else:
-        seq_range = torch.LongTensor([current_idx])
-    return seq_range
-
 def collate_out(data, pack=False):
     if isinstance(data[0], (list, tuple)):
         return [collate_out(list(d)) for d in zip(*data)]
     lengths = [0 if len(d.shape) == 0 else d.shape[0] for d in data]
-
     if isinstance(data[0], np.ndarray):
         data = [torch.from_numpy(d) for d in data]
     elif not hasattr(data[0], "__iter__"):
@@ -97,13 +72,21 @@ def collate_out(data, pack=False):
             data = rnn.pad_sequence(data, batch_first=True)
     return data
 
+def getdtype(dtype_string):
+    if dtype_string is None:
+        return None
+    try:
+        dtype = getattr(torch, dtype_string)
+        return dtype
+    except AttributeError:
+        return None
+
 
 class AudioDataset(Dataset):
     """Returns a dataset suitable for machine learning processing in PyTorch.
     It allows to run the main quality-check routines.
     """
     types = ['.aif', '.wav', '.aiff', '.mp3']
-    scale_amount = 10
 
     def _settransform(self, transforms):
         assert isinstance(transforms, AudioTransform)
@@ -132,40 +115,39 @@ class AudioDataset(Dataset):
         self.augmentations = []
     augmentations = property(_getaugmentation, _setaugmentation, _delaugmentation)
 
-    def _setactivetasks(self, active_tasks):
-        active_tasks = checklist(active_tasks)
-        for a in active_tasks:
-            assert a in self.metadata.keys()
-        self._active_tasks = active_tasks
-    def _getactivetasks(self):
-        return self._active_tasks
-    def _delactivetasks(self):
-        self._active_tasks = []
-    active_tasks = property(_getactivetasks, _setactivetasks, _delactivetasks)
 
-    def __init__(self, root, sr=None, bitrate=16, dtype=None, target_length=None,
-                 transforms=AudioTransform(),  target_transforms=None,
-                 augmentations=[], active_tasks = [], **kwargs):
+    def __init__(self, config: OmegaConf = None, root: str=None, sr: int=None, bitrate:int=16, dtype: torch.dtype=None,
+                 target_length: Union[float, int]=None, transforms: AudioTransform = AudioTransform(),
+                 augmentations: AudioAugmentation=[], target_transforms = None,
+                 sequence: Union[OmegaConf, dict] = None, scale_amount=10):
         """
+        General dataset for audio data. Imports audio files as raw waveforms, and may transform it using audio transforms
+        using the lardon (memmap front-end) encoding.
+
         Args:
-            root (string): root folder
-            transforms (MidiTransform, optional): Midi transformation to be applied. Defaults to MidiTransform().
-            chord_transforms (TargetTransform, optional): Target transformation. Defaults to None.
-            window_length (int, optional): Defaults to 2.
-            hop_length (int, optional): Defaults to 2.
-            quantization (list, optional): Defaults to [4,3].
-            parser (func): parser function (see importation.midi_import)
+            root (str): dataset root. Raw data must be in subfolder "data/", and transforms in subfolder "transforms/"
+            sr (int): sampling rate (default: None, does not convert incoming files)
+            bitrate (int): bitrate (default: 16)
+            dtype (torch.dtype): default dtype used (default: default torch dtype)
+            target_length (int, float): enforces data length during import (default: None)
+            transforms (AudioTransform): audio transform used when dataset is indexed.
+            target_transforms (AudioTransform): metadata transform used when dataset is indexed.
+            augmentations (AudioAugmentation): augmentations performed when dataset is indexed.
+            scale_amount (int): amount of data items used for transform scaling (default: 10)
         """
-        if not os.path.isdir(root):
+        if config is None:
+            config = OmegaConf.create()
+        self.root_directory = config.get('root') or root
+        assert self.root_directory is not None, "root must be present in config or in keyword root"
+        if not os.path.isdir(self.root_directory):
             raise FileNotFoundError(root)
-        self.root_directory = root
-        self.target_length = target_length
+        self.target_length = config.get('target_length') or target_length
         self.data = []
         self.metadata = {}
         self.classes = {}
-        self.sr = sr or 44100
-        self.bitrate = bitrate or 16
-        self.dtype = dtype or torch.get_default_dtype()
+        self.sr = config.get('sr') or sr or 44100
+        self.bitrate = config.get('bitrate') or bitrate or 16
+        self.dtype = getdtype(config.get('dtype')) or dtype or torch.get_default_dtype()
         self.partitions = {}
         self.partition_files = None
         self.parse_files()
@@ -175,17 +157,15 @@ class AudioDataset(Dataset):
         self.transforms = transforms or AudioTransform()
         self.augmentations = augmentations
         self.augment = len(self.augmentations) > 0
-        self._drop_time = False
-        self.scale_amount = kwargs.get('scale_amount', self.scale_amount)
-        self._flattened = None 
+        self.scale_amount = config.get('scale_amount') or scale_amount
+        self._flattened = None
         # metadata attributes
-        self._active_tasks = active_tasks
         self.target_transforms = target_transforms
         # sequence attributes
-        self._sequence_mode = None
-        self._sequence_length = None
-        self._sequence_idx = -2
-        self._dtype = torch.get_default_dtype()
+        sequence = config.get('sequence', sequence)
+        self._sequence_mode = None if sequence is None else sequence.get('mode', 'random')
+        self._sequence_length = None if sequence is None else sequence.get('length', 1)
+        self._sequence_dim = -2 if sequence is None else sequence.get('dim', -2)
 
     @property
     def available_transforms(self):
@@ -207,16 +187,16 @@ class AudioDataset(Dataset):
     def __len__(self):
         return len(self.data)
 
-    def __getitem__(self, item, **kwargs):
+    def __getitem__(self, item: Union[slice, Iterable[int], int], **kwargs):
         # retrieve indices
         if isinstance(item, slice):
             item = list(range(len(self)))[item]
         # retrieve data
         if hasattr(item, "__iter__"):
-            data = [self._get_item(i, **kwargs) for i in item]
+            data = [self.get_item(i, **kwargs) for i in item]
             data, seq_idx = [d[0] for d in data], [d[1] for d in data]
         else:
-            data, seq_idx = self._get_item(item, **kwargs)
+            data, seq_idx = self.get_item(item, **kwargs)
         data = checktensor(data)
         # retrieve metadata
         metadata = self._get_item_metadata(item, seq=seq_idx)
@@ -243,10 +223,24 @@ class AudioDataset(Dataset):
         return data, metadata
 
 
-    def _get_item(self, item: int, **kwargs):
-        sequence_mode = kwargs.get('sequence_mode', self._sequence_mode)
-        sequence_length = kwargs.get('sequence_length', self._sequence_length)
-        sequence_idx = kwargs.get('sequence_idx', self._sequence_idx or 0)
+    def get_item(self, item: int, sequence_mode: int = None, sequence_length: int = None,
+                 sequence_dim: int = None) -> Tuple[torch.Tensor, int]:
+        """
+        Get item at a given position. Additional sequence parameters can be given to override default dataset
+        parameters.
+        Args:
+            item (int): item to load
+            sequence_mode (int): sequence mode ("random"|"start", default: "random")
+            sequence_length:
+            sequence_dim:
+
+        Returns:
+
+        """
+
+        sequence_mode = sequence_mode or self._sequence_mode
+        sequence_length = sequence_length or self._sequence_length
+        sequence_dim = sequence_dim or self._sequence_dim or 0
         # importing data
         seq_idx = 0
         if isinstance(self.data, list):
@@ -255,15 +249,17 @@ class AudioDataset(Dataset):
             if sequence_length is not None:
                 if sequence_mode == "random":
                     if is_asynchronous:
-                        idx[sequence_idx] = lardon.randslice(sequence_length)
+                        idx[sequence_dim] = lardon.randslice(sequence_length)
                     else:
-                        if self.data[item].shape[sequence_idx] <= sequence_length:
+                        if self.data[item].shape[sequence_dim] <= sequence_length:
                             seq_idx = 0
                         else:
-                            seq_idx = random.randrange(0, self.data[item].shape[sequence_idx] - sequence_length)
-                        idx[sequence_idx] = slice(seq_idx, seq_idx + sequence_length)
+                            seq_idx = random.randrange(0, self.data[item].shape[sequence_dim] - sequence_length)
+                        idx[sequence_dim] = slice(seq_idx, seq_idx + sequence_length)
+                elif sequence_mode == "start":
+                    idx[sequence_dim] = slice(0, sequence_length)
                 else:
-                    idx[sequence_idx] = slice(0, sequence_length)
+                    raise ValueError("sequence mode %s not known"%sequence_mode)
             if is_asynchronous:
                 data, meta = self.data[item].__getitem__(tuple(idx), return_metadata=True, return_indices=True)
                 seq_idx = meta['idx']
@@ -279,23 +275,21 @@ class AudioDataset(Dataset):
             if sequence_length is not None:
                 if sequence_mode == "random":
                     if is_asynchronous:
-                        idx[sequence_idx] = lardon.randslice(sequence_length)
+                        idx[sequence_dim] = lardon.randslice(sequence_length)
                     else:
-                        seq_idx = random.randrange(0, self.data[item].shape[sequence_idx] - sequence_length)
-                        idx[sequence_idx] = slice(seq_idx, seq_idx + sequence_length)
+                        seq_idx = random.randrange(0, self.data[item].shape[sequence_dim] - sequence_length)
+                        idx[sequence_dim] = slice(seq_idx, seq_idx + sequence_length)
+                elif sequence_mode == "start":
+                    idx[sequence_dim] = slice(0, sequence_length)
                 else:
-                    idx[sequence_idx] = slice(0, sequence_length)
+                    raise ValueError("sequence mode %s not known"%sequence_mode)
             if is_asynchronous:
-                try:
-                    data, meta = self.data.__getitem__(tuple(idx), return_metadata=True, return_indices=True)
-                except Exception as e:
-                    pdb.set_trace()
-                #seq_idx = meta['idx'][sequence_idx]
+                data, meta = self.data.__getitem__(tuple(idx), return_metadata=True, return_indices=True)
             else:
                 data = self.data.__getitem__(idx)
         return data, seq_idx
 
-    def _get_item_metadata(self, item: int, seq=None):
+    def _get_item_metadata(self, item: int, seq: int=None):
         def get_time(metadata, seq):
             metadata = checktensor(metadata, allow_0d=False)
             if seq > 0 and metadata.ndim == 1:
@@ -304,7 +298,6 @@ class AudioDataset(Dataset):
                 return torch.Tensor([metadata])
             else:
                 return metadata[seq]
-
         if hasattr(item, "__iter__"):
             metadatas = [self._get_item_metadata(item[i], seq[i]) for i in range(len(item))]
             compiled_metadata = {}
@@ -319,7 +312,7 @@ class AudioDataset(Dataset):
             metadata = {'time': checktensor([get_time(self.metadata['time'][item], s) for s in seq], allow_0d=False)}
         else:
             metadata = {'time': checktensor(get_time(self.metadata['time'][item], seq), allow_0d=False)}
-        for k in self._active_tasks+['sr']:
+        for k in ['sr']:
             current_meta = self.metadata[k][item]
             if isinstance(current_meta, ContinuousList):
                 current_meta = current_meta[metadata['time']]
@@ -333,12 +326,13 @@ class AudioDataset(Dataset):
                 metadata[k] = torch.Tensor(current_meta)
         return metadata
 
-    def make_partitions(self, names, balance, from_files=True):
+    def make_partitions(self, names: Iterable[str], balance: Iterable[float], from_files: bool=True) -> None:
         """
         Builds partitions from the data
         Args:
             names (list[str]) : list of partition names
             balance (list[float]) : list of partition balances (must sum to 1)
+            from_files (bool): build partition over files rather than data items (ensures consistency with flattened data)
         """
         partition_files = {}
         if from_files:
@@ -360,29 +354,32 @@ class AudioDataset(Dataset):
         self.partitions = partitions
         self.partition_files = partition_files
 
-    @property
-    def has_sequences(self):
-        return isinstance(self.data[0], list)
-
-    def drop_sequences(self, sequence_length, idx=None, mode="random"):
-        if sequence_length is None:
-            self._sequence_mode = None
-            self._sequence_length = None
-            self._sequence_idx = idx
-        else:
-            # assert self.has_sequences, "Dataset %s does not contain sequences"%self
-            self._sequence_length = sequence_length
-            self._sequence_mode = mode
-            self._sequence_idx = 0 if idx is None else idx
-
-    def retrieve(self, item):
+    def drop_sequences(self, sequence_length, sequence_dim=0, sequence_mode="random") -> None:
         """
-        Create a sub-dataset containing target items
+        Tells the dataset to drop data sequences.
         Args:
-            item (iter[int] or str) : target data ids / partition
+            sequence_length (int): length of sequences
+            sequence_dim (int): sequence axis (default: 0)
+            sequence_mode (int): "random" takes a random chunk, "start" takes the sequence at the beginning. (default: 0)
+
+        """
+        if sequence_length is None:
+            self._sequence_length = None
+            self._sequence_mode = None
+            self._sequence_dim = sequence_dim
+        else:
+            self._sequence_length = sequence_length
+            self._sequence_mode = sequence_mode
+            self._sequence_dim = sequence_dim
+
+    def retrieve(self, item: Union[int, torch.LongTensor, Iterable[int], str]) -> Dataset:
+        """
+        Returns an AudioDataset with a subset of selected items.
+        Args:
+            item (int, Iterable[int], torch.LongTensor or str) : target data ids / partition
 
         Returns:
-            subdataset (MidiDataset) : obtained sub-dataset
+            subdataset (AudioDataset) : obtained sub-dataset
         """
         if isinstance(item, list):
             item = np.array(item)
@@ -393,7 +390,7 @@ class AudioDataset(Dataset):
         elif isinstance(item, str):
             item = self.partitions[item]
 
-        dataset = type(self)(self.root_directory, sr = self.sr, target_length=self.target_length,
+        dataset = type(self)(root=self.root_directory, sr = self.sr, target_length=self.target_length,
                              bitrate=self.bitrate, dtype=self.dtype, transforms=self._transforms)
 
         if isinstance(self.data, lardon.OfflineDataList):
@@ -405,37 +402,36 @@ class AudioDataset(Dataset):
         dataset.hash = {}
         for i, f in enumerate(dataset.files):
             dataset.hash[f] = dataset.hash.get(f, []) + [i]
-        dataset._active_tasks = self._active_tasks
         dataset._sequence_length = self._sequence_length
         dataset._sequence_mode = self._sequence_mode
-        dataset._sequence_idx = self._sequence_idx
+        dataset._sequence_dim = self._sequence_dim
         dataset._pre_transform = self._pre_transform
-        dataset._dtype = self._dtype
+        dataset.dtype = self.dtype
         return dataset
 
+    """
     def retrieve_from_class(self, task, labels):
         valid_classes = [self.classes[task][i] for i in labels]
         ids = np.where(np.in1d(self.metadata[task], valid_classes))[0]
         return self.retrieve(ids)
+    """
 
-    def __delitem__(self, key):
-        del self.data.entries[key]
-        del self.files[key]
-        for k in self.metadata.keys():
-            del self.metadata[k][key]
-
-    def check_audio_folder(self):
+    def check_audio_folder(self) -> bool:
+        """Performs a checking pass over dataset files."""
+        check = True
         for f in tqdm(self.files, total=len(self.files), desc="Checking audio files..."):
             try:
                 x, y = parse_audio_file(self.root_directory+"/"+f, sr=self.sr, len=self.target_length)
             except Exception as e:
                 print("Problem with file %s"%f)
                 print("Exception : %s" % e)
+                check = False
                 pass
+        return check
 
-    def parse_files(self):
+    def parse_files(self) -> None:
         """
-        parses root directory
+        parses root directory.
         """
         files = []
         for r, d, f in os.walk(self.root_directory+"/data"):
@@ -446,47 +442,56 @@ class AudioDataset(Dataset):
         self.files = files
         self.hash = {self.files[i]:i for i in range(len(self.files))}
 
-    def import_data(self, flatten=False, scale=None, write_transforms=False, save_transform_as=None, min_len=None, force=False):
+    def import_data(self, scale: bool = None, write_transforms: bool = False,
+                    save_transform_as: str = None, min_len: int = None, force: bool = False) -> None:
         """
-        Imports data from root directory (must be parsed beforehand)
+        Import data listed in dataset files.
         Args:
-            flatten (bool): if False, created nested arrays for each file. If True, creates a flattened array
-            scale (bool): performs transform scale after import
+            scale (bool): scale transforms after import (default: True)
+            write_transforms (bool): writes transform into dataset data.
+            save_transform_as (str): writes transform to the transforms/ folder.
+            min_len (int): asserts a minimum size for import size
+            force (bool): overwrites transform if a transform of the same name is found.
         """
+
+        if len(self.files) == 0:
+            raise ValueError("Trying to import data from an empty dataset at %s."%self.root_directory)
         data = []
         metadata = {}
         files = []
         hash = {}
         running_id = 0
         for i, f in tqdm(enumerate(self.files), total=len(self.files), desc="Importing audio files..."):
-            current_data, current_metadata = parse_audio_file(os.path.abspath(self.root_directory+"/"+f), sr=self.sr, len=self.target_length, min_len = min_len)
+            current_data, current_metadata = parse_audio_file(os.path.abspath(self.root_directory+"/"+f),
+                                                              sr=self.sr, len=self.target_length, min_len = min_len)
             if len(metadata.keys()) == 0:
                 metadata = {k: [] for k in current_metadata.keys()}
-            if flatten:
-                data.extend(current_data)
-                files.extend([self.files[i]]*len(current_data))
-                for k, v in current_metadata.items():
-                    metadata[k].extend(checklist(v))
-                hash[f] = list(range(running_id, running_id+len(current_data)))
-                running_id +=  len(current_data)
-            else:
-                data.append(current_data)
-                hash[f] = running_id
-                for k, v in current_metadata.items():
-                    metadata[k].append(v)
-                running_id += 1
-                files.append(self.files[i])
-                hash[self.files[i]] = i
+            data.append(current_data)
+            hash[f] = running_id
+            for k, v in current_metadata.items():
+                metadata[k].append(v)
+            running_id += 1
+            files.append(self.files[i])
+            hash[self.files[i]] = i
 
         self.data = data
         self.hash = hash
         self.files = files
 
         self.metadata = {**self.import_metadata(), **metadata}
+        if scale:
+            # scale current transforms to imported data.
+            self.scale_transform(self.scale_amount)
         if write_transforms:
+            assert save_transform_as is not None, "if write_transforms is True, save_transform_as must be given a string"
             self.write_transforms(save_as=save_transform_as, force=force)
 
-    def scale_transform(self, scale):
+    def scale_transform(self, scale: Union[int, bool]) -> None:
+        """
+        Scales current transform on a given amount of data.
+        Args:
+            scale (int, bool): amount of data used for scaling. If True, takes all the data.
+        """
         if scale and self._transforms is not None:
             if scale is True:
                 self._transforms.scale(self.data[:])
@@ -495,7 +500,16 @@ class AudioDataset(Dataset):
                 scale_data = [self.data[i.item()] for i in idx]
                 self._transforms.scale(scale_data)
 
-    def import_transform(self, transform):
+    def import_transform(self, transform: str) -> AudioTransform:
+        """
+        Imports the target data.
+        Args:
+            transform (str): name of transform to import.
+
+        Returns:
+            original_transform (AudioTransform): transform used before export.
+
+        """
         assert transform in self.available_transforms
         target_directory = f"{self.root_directory}/transforms/{transform}"
         if len(self.files) > 0:
@@ -553,17 +567,21 @@ class AudioDataset(Dataset):
                     print('warning : file %s not found in metadata'%(file, ))
         return metadata
 
-    def write_transforms(self, save_as=None, force=False):
+    def write_transforms(self, save_as=None, force=False) -> None:
         """
         Write transforms in place, parsing the files to the target transform using lardon.
-        Note : dataset should not be flattened, providing degenerated lardon pickling.
-        :param name: transform name
-        :param selector:
-        :return:
+        Note : dataset should not be flattened if exported, providing degenerated lardon pickling.
+
+        Args:
+            save_as (str): named of exported transform. If None, data is not exported. (default : None)
+            force (int): overwrites transform if found a transform with the same name. (default: False)
         """
+
         transformed_meta = []
         target_directory = f"{self.root_directory}/transforms/{save_as}"
         if save_as:
+            if self._flattened:
+                raise Exception('trying to export a flattened dataset.')
             with lardon.LardonParser(self.root_directory+'/data', target_directory, force=force) as parser:
                 for i, d in enumerate(tqdm(self.data, desc="exporting transforms...", total=len(self.data))):
                     time = torch.tensor([0.]) if not "time" in self.metadata['time'] else self.metadata['time'][i]
@@ -578,7 +596,7 @@ class AudioDataset(Dataset):
             transformed_meta = {k: [t[k] for t in transformed_meta] for k in transformed_meta[0].keys()}
             with open(f"{target_directory}/transforms.ct", 'wb') as f:
                 dill.dump(self._transforms, f)
-            save_dict = self.get_attributes()
+            save_dict = self.get_attributes(with_data=False)
             with open(f"{target_directory}/dataset.ct", "wb") as f:
                 dill.dump(save_dict, f)
         else:
@@ -594,7 +612,13 @@ class AudioDataset(Dataset):
         self.metadata = {**self.metadata, **transformed_meta}
 
 
-    def flatten_data(self, axis=0):
+    def flatten_data(self, axis=0) -> None:
+        """
+        Flattens the content of dataset's nested data among given axis.
+        Args:
+            axis (int): flattened axis
+
+        """
         data = []
         metadata = {k: [] for k in self.metadata.keys()}
         files = []
@@ -636,18 +660,21 @@ class AudioDataset(Dataset):
             self.metadata['time'] = np.array(self.metadata['time'])[:, np.newaxis]
         self.hash = hash
         self.files = files
-        self._sequence_idx = None
+        self._sequence_dim = None
         self._sequence_length = None
         self._flattened = axis
 
 
-    def get_attributes(self):
+    def get_attributes(self, with_data=True) -> dict:
         """
-        Get a dict version of the dataset (conveniant for pickling)
+        Get a dict version of the dataset (convenient for pickling)
         Returns:
             save_dict (dict) : dictionary
         """
-        return {'files':self.files,
+        return {
+                'data': self.data if with_data else None,
+                'metadata': self.metadata,
+                'files':self.files,
                 'hash':self.hash,
                 'sr': self.sr,
                 'bitrate': self.bitrate,
@@ -660,28 +687,31 @@ class AudioDataset(Dataset):
                 'pre_transform': self._pre_transform,
                 'sequence_mode': self._sequence_mode,
                 'sequence_length': self._sequence_length,
-                'sequence_idx':self._sequence_idx,
+                'sequence_dim':self._sequence_dim,
                 'flattened': self._flattened}
 
-    def save(self, name, write_transforms=False, **kwargs):
+    def save(self, name: str, write_transforms: bool = False, **kwargs) -> None:
         """Manage folders and save data to disk
 
         Args:
-            name (string): dataset instance name
-            write_transforms (bool, optional): If True saves the current instance as a dict. Defaults to True.
+            name (str): dataset instance name
+            write_transforms (bool): If True saves the current instance as a dict. Defaults to True.
         """
         if not os.path.isdir(self.root_directory+'/pickles'):
             os.makedirs(self.root_directory+'/pickles')
         if write_transforms:
             self.write_transforms(name, flatten=False)
         save_dict = {**self.get_attributes(), **kwargs}
-        save_dict['data'] = self.data
-        save_dict['metadata'] = self.metadata
         filename = f"{self.root_directory}/pickles/{name}.ctp"
         with open(filename, 'wb') as savefile:
             dill.dump(save_dict, savefile)
 
-    def load_dict(self, save_dict):
+    def load_dict(self, save_dict: dict) -> None:
+        """
+        Loads a dataset from its save dict, exported by the save method.
+        Args:
+            save_dict (dict): saved dict
+        """
         files = []; hash = {}
         for f in save_dict['files']:
             new_file = re.sub(save_dict['root_directory'], self.root_directory, f)
@@ -701,36 +731,22 @@ class AudioDataset(Dataset):
         self.partition_files = save_dict.get('partition_files')
         self._active_tasks = save_dict.get('active_tasks', [])
         self._pre_transform =save_dict.get('pre_transform')
-        self._sequence_mode = save_dict.get('sequence_mode')
-        self._sequence_length = save_dict.get('sequence_length')
-        self._sequence_idx = save_dict.get('sequence_idx')
+        # self._sequence_mode = save_dict.get('sequence_mode')
+        # self._sequence_length = save_dict.get('sequence_length')
+        # self._sequence_dim = save_dict.get('sequence_dim')
         self._flattened = save_dict.get('flattened', False)
 
-    @classmethod
-    def load(cls, filename, root_prefix, drop_dict=False):
-        """Load a MidiDataset instance from save dict
-
+    def transform_file(self, file: str) -> Tuple[torch.Tensor, dict]:
+        """
+        Transforms a given file.
         Args:
-            filename (string): filename
-            root_prefix (string): root folder
+            file (str): file to load and transform
 
         Returns:
-            MidiDataset: a MidiDataset instance
-        """
-        filename = f"{root_prefix}/pickles/{filename}"
-        with open(filename, 'rb') as savefile:
-            save_dict = dill.load(savefile)
-        dataset = AudioDataset(root_prefix,
-                              transforms=save_dict['transforms'],
-                              target_length=save_dict['target_length'],
-                              tasks=save_dict['tasks'])
-        dataset.load_dict(save_dict)
-        if drop_dict:
-            return dataset, save_dict
-        else:
-            return dataset
+            data(torch.Tensor): transformed data
+            metadata (dict): imported metadata
 
-    def transform_file(self, file):
+        """
         data, meta = parse_audio_file(file, self.sr, len=self.target_length, bitrate=self.bitrate)
         if self._pre_transform is not None:
             data, meta['time'] = self._pre_transform(data, time=meta['time'])
@@ -741,7 +757,15 @@ class AudioDataset(Dataset):
             data = data.to(self.dtype)
         return data, meta
 
-    def invert_transform(self, data):
+    def invert_transform(self, data: torch.Tensor):
+        """
+        Takes a transformed data and revert it to its original waveform.
+        Args:
+            data (torch.Tensor): data to revert
+
+        Returns:
+
+        """
         if self._transforms.invertible:
             inv_data = self._transforms.invert(data)
         else:

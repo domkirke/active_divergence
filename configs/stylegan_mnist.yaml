@@ -1,0 +1,50 @@
+name: ??
+rundir: "${dir:runtime}/saves/${name}"
+
+hydra:
+  job:
+    name: "${name}"
+  run:
+    dir: "${rundir}"
+  sweep:
+    dir: "${dir:runtime}/saves/${name}"
+    subdir: "${base:${data.dataset.root}}"
+
+defaults:
+  - data:
+    - defaults
+    - dataset/mnist
+  - model: style_gan
+  - callbacks: img_defaults
+  - _self_
+
+data:
+  dataset:
+    resize: [32,32]
+  loader:
+    batch_size: 32
+    num_workers: 0
+
+# here we add specific parameters for the decoder's output (softplus + normal distribution).
+model:
+  discriminator:
+    args:
+      # remove if wasserstein!
+      out_nnlin: Sigmoid
+  generator:
+    args:
+      out_nnlin: Tanh
+  latent:
+    dim: 128
+    dist: Normal
+  training:
+    training_schedule: [2,2]
+    transition_schedule: [1,1]
+    #training_schedule: [100,100,100]
+    #transition_schedule: [50,50,50,50]
+
+pl_trainer:
+  max_epochs: 1e5
+  limit_train_batches: 1
+  limit_val_batches: 1
+

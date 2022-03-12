@@ -1,0 +1,65 @@
+data:
+  module: MNISTDataModule
+  dataset:
+    binary: 0
+    resize: [32, 32]
+    polarity: unipolar
+  loader:
+    batch_size: 64
+    num_workers: 0
+
+model:
+  type: ProgressiveGAN
+  discriminator:
+    type: ConvEncoder
+    args:
+      layer: DownsamplingConvBlock
+      channels: [16,32,64,128]
+      kernel_size: [5,5,5]
+      nn_lin: LeakyReLU
+      out_nnlin: Sigmoid
+      norm: pixel
+      bias: False
+      block_args:
+        downsample: 2
+        n_convs_per_block: 1
+      reshape_method: flatten
+      target_shape: 1
+  generator:
+    type: DeconvEncoder
+    args: 
+      layer: UpsamplingConvBlock
+      channels: [16,32,64,128]
+      kernel_size: [5,5,5]
+      norm: pixel
+      bias: False
+      block_args:
+        upsample: 2
+        n_convs_per_block: 1
+      nn_lin: LeakyReLU
+      out_nnlin: Sigmoid
+      reshape_method: channel
+  latent:
+    dist: Normal
+    dim: 128
+  training:
+    #balance: [5, 1]
+    margin: 0.1
+    invert: 0
+    mode: "adv"
+    wgan_clip: 0.02
+    lr: [5.e-5, 5.e-5]
+    training_schedule: [100,100,100]
+    transition_schedule: [50,50,50,50]
+    save:
+      path: &dir /slow-1/axel/active_divergence/mnist
+      name: &name progressive-mnist-gan
+
+callbacks:
+  [
+    { type: LearningRateMonitor, args: {logging_interval: "epoch"} },
+    { type: ModelSummary, args: {max_depth: 1} },
+    { type: ModelCheckpoint, args: {dirpath: *dir, filename: *name, every_n_epochs: 1, save_last: True, epoch_period: 10} },
+    { type: DissectionMonitor, args: {monitor_epochs: 1, embedding_epochs: 10} },
+    { type: ImgReconstructionMonitor }
+  ]

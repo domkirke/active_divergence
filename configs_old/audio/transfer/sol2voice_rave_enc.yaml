@@ -1,0 +1,53 @@
+data:
+  module: AudioDataModule
+  dataset:
+    #root: /fast-1/datasets/waveform/sol-full
+    root: /fast-1/datasets/VoiceDataset
+    #root: tests/acidsInstruments-test
+    sr: 44100
+    bitrate: 16
+    min_length: 32768
+    sequence:
+      mode: random
+      length: 32768
+      idx: -1
+  transforms:
+    transforms: [{type: Mono, args: {squeeze: 1}}]
+  augmentations:
+    [
+      {type: RandomPhase, args: {prob: 0.8}},
+      {type: Dequantize}
+    ]
+  loader:
+    batch_size: 8
+    num_workers: 0
+    shuffle: 1
+
+
+model:
+  type: RAVE
+  checkpoint: [
+              {
+                path: /slow-1/axel/active_divergence/audio/sol_rave/last.ckpt,
+                config: "configs_old/audio/rave/sol_rave.yaml",
+                params: ["encoder(.*)", "decoder(.*)"]
+              }
+            ]
+  optim_params: ["encoder(.*)", "discriminator(.*)"]
+  training:
+    lr: 1.e-4
+    beta: 1.0
+    #warmup: 0
+    save:
+      path: &dir /slow-1/axel/active_divergence/audio
+      name: &name sol2voice_rave_enc_adv
+
+
+callbacks:
+  [
+    { type: LearningRateMonitor, args: {logging_interval: "epoch"} },
+    { type: ModelSummary, args: {max_depth: 1} },
+    { type: ModelCheckpoint, args: {dirpath: *dir, filename: *name, every_n_epochs: 1, save_last: True, epoch_period: 100} },
+    #{ type: DissectionMonitor, args: {monitor_epochs: 1, embedding_epochs: 10, batch_size: 1024} },
+    { type: AudioReconstructionMonitor, args: {plot_reconstructions: 0, plot_samples: 0, generate_samples: 1, generate_files: 1}}
+  ]

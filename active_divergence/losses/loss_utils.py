@@ -1,7 +1,7 @@
 import torch
 
 __all__ = ['logmag_l1', 'logmag_l2', 'mag_l1', 'mag_l2', 'phase_l1', 'phase_l2',
-           'if_l1, if_l2', 'spectral_convergence', 'weighted_phase', 'log_isd']
+           'if_l1', 'if_l2', 'spectral_convergence', 'weighted_phase', 'log_isd']
 
 def frobenius(mat, axis=-1):
     return mat.pow(2).sum(axis).sqrt()

@@ -102,6 +102,21 @@ def print_module_grads(module):
         else:
             print_stats(k, v.grad)
 
+def trace_distribution(distribution, name="", scatter_dim=False):
+    if name != "":
+        name = name + "_"
+    if isinstance(distribution, dist.Normal):
+        if scatter_dim:
+            return {**{f'{name}mean/dim_{i}': distribution.mean[..., i] for i in range(distribution.mean.shape[-1])},
+                    **{f'{name}std/dim_{i}': distribution.stddev[..., i] for i in range(distribution.stddev.shape[-1])}}
+        else:
+            return {f"{name}mean": distribution.mean, f"{name}std": distribution.stddev}
+    elif isinstance(distribution, (dist.Bernoulli, dist.Categorical)):
+        if scatter_dim:
+            return {**{f'{name}probs/dim_{i}': distribution.probs[..., i] for i in range(distribution.probs.shape[-1])}}
+        else:
+            return {f"{name}probs": distribution.probs}
+
 def get_shape_from_ratio(n_item, target_ratio):
     i = np.ceil(np.sqrt(n_item / np.prod(target_ratio)))
     h, w = target_ratio[1] * i, target_ratio[0] * i

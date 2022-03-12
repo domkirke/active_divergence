@@ -7,6 +7,7 @@ numpy
 nsgt
 pytest
 dill
+hydra
 pytorch_lightning
 scikit_learn
 scipy
@@ -15,8 +16,6 @@ torch==1.10
 torchvision==0.11
 torchaudio==0.10
 tensorboard
-ltfatpy
-tifresi
 mdct
 GPUtil
 av

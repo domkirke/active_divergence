@@ -22,7 +22,7 @@ class AutoRegressive(pl.LightningModule):
         self.autoregressive = getattr(ar_models, config.autoregressive.type)(config.autoregressive.args)
         config.training = config.get('training') or training
         config.losses = config.get('losses') or losses
-        # save config and hyperparameters
+        # save configs and hyperparameters
         self.config = config
         self.save_hyperparameters(dict(self.config))
         self.configure_losses()
