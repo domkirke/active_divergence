@@ -1,7 +1,8 @@
 import os, sys
+
+from fsspec import Callback
 sys.path.append('../')
 from active_divergence.utils.misc import ContinuousList
-
 
 def read_single_metadata(cast=str):
     def closure(meta, **kwargs):
@@ -30,6 +31,10 @@ def parse_temporal_with_onsets(type):
                 metas[float(onset)] = chord
         return metas
     return closure
+
+
+
+
 
 metadata_hash = {'chord': parse_temporal_with_onsets(str),
                  'tempo': read_single_metadata(float),

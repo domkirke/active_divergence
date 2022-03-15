@@ -1,2 +1,9 @@
 module: AudioDataModule
 root: "${dir:lib}/tests/acidsInstruments-test"
+metadata_callbacks:
+  pitch:
+    name: read_single_metadata
+    type: int
+  octave:
+    name: read_single_metadata
+    type: int

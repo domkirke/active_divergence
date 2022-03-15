@@ -4,7 +4,7 @@ sys.path.append('../')
 sys.path.append('../../')
 from active_divergence.data.audio.transforms import AudioTransform, NotInvertibleError
 from active_divergence.data.audio.augmentations import AudioAugmentation
-from active_divergence.data.audio.metadata import *
+from active_divergence.data.audio import metadata as am
 from active_divergence.utils import checklist, checktensor, checknumpy, ContinuousList
 import torch, torchaudio, os, dill, re, numpy as np, matplotlib.pyplot as plt, random, copy, lardon, numbers, math
 from tqdm import tqdm
@@ -44,6 +44,12 @@ def parse_folder(d, valid_exts):
         valid_files = [root+'/'+f for f in valid_files]
         files.extend(valid_files)
     return files
+
+type_hash = {"int":int, "str": str, "float": float}
+def get_callback_from_config(config):
+    callback_name = config.name
+    callback_type = type_hash[config.get('type', 'int')]
+    return getattr(am, callback_name)(callback_type)
 
 def import_classes(f):
     classes = {}
@@ -161,6 +167,7 @@ class AudioDataset(Dataset):
         self._flattened = None
         # metadata attributes
         self.target_transforms = target_transforms
+        self.metadata_callbacks = config.get('metadata_callbacks', {})
         # sequence attributes
         sequence = config.get('sequence', sequence)
         self._sequence_mode = None if sequence is None else sequence.get('mode', 'random')
@@ -312,18 +319,20 @@ class AudioDataset(Dataset):
             metadata = {'time': checktensor([get_time(self.metadata['time'][item], s) for s in seq], allow_0d=False)}
         else:
             metadata = {'time': checktensor(get_time(self.metadata['time'][item], seq), allow_0d=False)}
-        for k in ['sr']:
+        for k in self.metadata.keys():
+            if k == "time":
+                continue
             current_meta = self.metadata[k][item]
             if isinstance(current_meta, ContinuousList):
                 current_meta = current_meta[metadata['time']]
             elif hasattr(current_meta, '__iter__'):
                 current_meta = current_meta[seq]
-            if isinstance(current_meta, int):
+            if isinstance(current_meta, (int, np.int, np.int32, np.int64)):
                 metadata[k] = torch.LongTensor([current_meta])
-            elif isinstance(current_meta, float):
+            elif isinstance(current_meta, (float, np.float, np.float32, np.float64)):
                 metadata[k] = torch.FloatTensor([current_meta])
             else:
-                metadata[k] = torch.Tensor(current_meta)
+                metadata[k] = current_meta
         return metadata
 
     def make_partitions(self, names: Iterable[str], balance: Iterable[float], from_files: bool=True) -> None:
@@ -500,7 +509,7 @@ class AudioDataset(Dataset):
                 scale_data = [self.data[i.item()] for i in idx]
                 self._transforms.scale(scale_data)
 
-    def import_transform(self, transform: str) -> AudioTransform:
+    def import_transform(self, transform: str, n_files: int = None) -> AudioTransform:
         """
         Imports the target data.
         Args:
@@ -537,12 +546,10 @@ class AudioDataset(Dataset):
 
         metadata = {}
         for t in tasks:
-            if os.path.isfile(f"{metadata_directory}/{t}/callback.txt"):
-                with open(f"{metadata_directory}/{t}/callback.txt", 'r') as f:
-                    callback = re.sub('\n', '', f.read())
-                callback = metadata_hash.get(callback)
+            if t in self.metadata_callbacks:
+                callback = get_callback_from_config(self.metadata_callbacks[t])
             else:
-                callback = metadata_hash.get(t)
+                callback = am.metadata_hash.get(t)
             if callback is None:
                 print('[Warning] could not find callback for task %s'%t)
                 continue

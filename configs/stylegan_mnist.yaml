@@ -14,7 +14,9 @@ defaults:
   - data:
     - defaults
     - dataset/mnist
-  - model: style_gan
+  - model: 
+    - style_gan
+    - training/gan_adv
   - callbacks: img_defaults
   - _self_
 
@@ -22,29 +24,54 @@ data:
   dataset:
     resize: [32,32]
   loader:
-    batch_size: 32
+    batch_size: 16
     num_workers: 0
 
 # here we add specific parameters for the decoder's output (softplus + normal distribution).
 model:
   discriminator:
+    type: ConvEncoder
     args:
+      channels: [64,64,64,64]
+      kernel_size: [5,5,5]
+      norm: pixel
+      #bias: False
+      block_args:
+        downsample: 2
+        n_convs_per_block: 2
+      nn_lin: LeakyReLU
       # remove if wasserstein!
       out_nnlin: Sigmoid
   generator:
+    type: DeconvEncoder
     args:
+      channels: [64,64,64,64]
+      kernel_size: [5,5,5]
+      norm: pixel
+      #bias: False
+      block_args:
+        upsample: 2
+        n_convs_per_block: 2
+      nn_lin: ReLU 
       out_nnlin: Tanh
   latent:
     dim: 128
     dist: Normal
   training:
-    training_schedule: [2,2]
-    transition_schedule: [1,1]
-    #training_schedule: [100,100,100]
-    #transition_schedule: [50,50,50,50]
+    mode: "adv"
+    balance: [1, 1]
+    lr: [1.e-5, 2.e-5]
+    gp: 10.0
+    path_length: 2.0
+    reg_period: 5
+    training_schedule: [50,200]
+    transition_schedule: [100,200]
+    #training_schedule: [2,2]
+    #transition_schedule: [1,1]
 
 pl_trainer:
   max_epochs: 1e5
-  limit_train_batches: 1
-  limit_val_batches: 1
+  gpus: [2]
+  #limit_train_batches: 10
+  #limit_val_batches: 10
 

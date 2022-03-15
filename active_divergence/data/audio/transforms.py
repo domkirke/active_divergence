@@ -1,3 +1,4 @@
+from ast import fix_missing_locations
 import torch, torchaudio, abc, numpy as np, librosa, re, scipy, pdb, math, random
 import sys; sys.path.append('../')
 from active_divergence.utils import *
@@ -99,7 +100,7 @@ class ComposeAudioTransform(AudioTransform):
                     if hasattr(t, item):
                         values.append(getattr(t, item))
             if len(values) == 0:
-                raise AttributeError
+                raise AttributeError()
             else:
                 if len(values) == 1:
                     return values[0]
@@ -355,12 +356,10 @@ class MuLaw(AudioTransform):
 
 
 class Normalize(AudioTransform):
-    def __init__(self, mode="minmax", scale="bipolar", max=None):
+    def __init__(self, mode="bipolar", max=None):
         super(Normalize, self).__init__()
         self.mode = mode or "minmax"
-        self.polarity = scale or "bipolar"
-        self.mean = None
-        self.max = max
+        self.mean = None; self.max = None
 
     def __repr__(self):
         return f"Normalize(mode={self.mode}, scale={self.scale})"
@@ -369,44 +368,36 @@ class Normalize(AudioTransform):
     def needs_scaling(self):
         return self.mean is None or self.max is None
 
-    def get_stats(self, data, mode="gaussian", polarity="bipolar"):
-        if mode == "minmax":
-            if polarity == "bipolar":
-                mean = (torch.max(data) - torch.sign(torch.min(data))*torch.min(data)) / 2
-                max = torch.max(torch.abs(data - mean))
-            elif polarity == "unipolar":
-                mean = torch.min(data); 
-            max = torch.max(torch.abs(data)) if self.max is None else self.max
+    def get_stats(self, data, mode="gaussian"):
+        if mode in ["unipolar", "bipolar"]:
+            mean = torch.min(data); 
+            max = torch.max(data-mean)
         elif mode == "gaussian":
-            if polarity=='bipolar':
-                mean = torch.mean(data); max = torch.std(data)
-            if polarity=='unipolar':
-                mean = torch.min(data); 
-                max = torch.std(data) if self.max is None else torch.std(data) * self.max
+            mean = torch.mean(data); max = torch.std(data)
         return mean, max
 
     def scale(self, data):
         if issubclass(type(data), list):
-            stats = torch.Tensor([self.get_stats(d, self.mode, self.polarity) for d in data])
-            if self.mode == "minmax":
-                self.mean = torch.mean(stats[:,0]); self.max = torch.max(stats[:,1])
+            stats = torch.Tensor([self.get_stats(d, self.mode) for d in data])
+            if self.mode in ["unipolar", "bipolar"]:
+                self.mean = stats[:,0].min(); self.max = stats[:,1].max()
             else:
-                self.mean = torch.min(stats[:, 0])
-                # recompose overall variance from element-wise ones
-                n_elt = torch.Tensor([torch.prod(torch.Tensor(list(x.size()))) for x in data])
+                self.mean = torch.mean(stats[:, 0])
                 std_unscaled = ((stats[:,1]**2) / (stats.shape[0]))
                 self.max = torch.sqrt(torch.sum(std_unscaled))
         else:
-            self.mean, self.max = self.get_stats(data, self.mode, self.polarity)
+            self.mean, self.max = self.get_stats(data, self.mode)
 
     def __call__(self, x, batch_first=True):
         if issubclass(type(x), list):
             return [self(x[i]) for i in range(len(x))]
         if self.mean is None:
-            mean, max = self.get_stats(x, self.mode, self.polarity)
+            mean, max = self.get_stats(x, self.mode)
         else:
             mean, max = self.mean, self.max
         out = torch.true_divide(x - mean, max)
+        if self.mode == "bipolar":
+            out  = out * 2 - 1
         # if self.polarity == "unipolar":
         #     out = out + eps
         return out
@@ -414,8 +405,9 @@ class Normalize(AudioTransform):
     def invert(self, x):
         if self.mean is None or self.max is None:
             raise NotInvertibleError()
-        return (x - eps) * self.max + self.mean
-
+        if self.mode == "bipolar":
+            x = (x + 1) / 2
+        return x * self.max + self.mean
 
 def apply_hpss(tensor, margin=1.0, power=2, transpose=True):
     if len(tensor.shape) > 2:
@@ -449,7 +441,7 @@ class STFT(AudioTransform):
     available_backends = ['torch', 'tifresi']
 
     def __init__(self, nfft=2048, hop_size=None, win_size=None, sr=44100,
-                 hps=False, hps_margin= 1.0, hps_power=2, backend="tifresi"):
+                 hps=False, hps_margin= 1.0, hps_power=2, backend="tifresi", keep_nyquist=True):
         self.nfft = nfft
         self.hop_size = hop_size or nfft // 4
         self.win_size = win_size or self.nfft
@@ -458,6 +450,7 @@ class STFT(AudioTransform):
         self.hps_margin = hps_margin
         self.hps_power = hps_power
         self.backend = backend or "tifresi"
+        self.keep_nyquist = keep_nyquist
         assert self.backend in self.available_backends
         if self.backend == "tifresi":
             if not TIFRESI_AVAILABLE:
@@ -491,8 +484,8 @@ class STFT(AudioTransform):
             if x.ndim > 1:
                 batch_shape = x.shape[:-1]
                 x = x.view(-1, x.shape[-1])
-                x = [torch.from_numpy(stft.dgt(preprocess_signal_stft(x_tmp.numpy(), self.nfft)).T) for x_tmp in x]
-                out = torch.stack(x).reshape(*batch_shape, -1, x[0].shape[0]).transpose(-2, -1)
+                x = [torch.from_numpy(stft.dgt(preprocess_signal_stft(x_tmp.numpy(), self.nfft).T)) for x_tmp in x]
+                out = torch.stack(x).transpose(-2, -1).reshape(*batch_shape, -1, x[0].shape[0])
             else:
                 out = torch.from_numpy(stft.dgt(preprocess_signal_stft(x.numpy(), self.nfft)).T)
 
@@ -503,6 +496,10 @@ class STFT(AudioTransform):
 
         if self.hps:
             out = torch.from_numpy(apply_hpss(out.numpy(), self.hps_margin, self.hps_power))
+
+        if not self.keep_nyquist:
+            out = out[..., 1:]
+
         if time is None:
             return out
         else:
@@ -515,6 +512,8 @@ class STFT(AudioTransform):
         return time[..., 0]
 
     def invert(self, x, *args, time=None, **kwargs):
+        if not self.keep_nyquist:
+            x = torch.cat([torch.zeros((*x.shape[:-1], 1), dtype=x.dtype), x], dim=-1)
         if torch.is_complex(x):
             if self.backend == "torch":
                 out = torch.istft(x.transpose(-2, -1), self.nfft, self.hop_size, self.win_size)
@@ -1145,9 +1144,6 @@ class HarmonicCQT(CQT):
         raise NotInvertibleError()
 
 
-
-
-
 def pitch_hash():
     return {'C':0, 'Db':1, 'D-':1, 'C#':1, 'C♯':1, 'D':2, 'E-':3, 'Eb':3, 'D♯':3, 'D#':3, 'E':4, 'F':5, 'F#':6, 'F♯':6,
             'Gb':6, 'G-':6, 'G':7, 'G#':8, 'G♯':8, 'A-':8, 'Ab':8, 'A':9, 'A♯':10, 'A#':10, 'B-':10, 'Bb':10, 'B':11, 'C-':11}
@@ -1313,7 +1309,7 @@ eps = 1e-9
 
 
 class Magnitude(AudioTransform):
-    def __init__(self, normalize=None, contrast="log1p", shrink=4, global_norm=True, log_clamp=-8, **kwargs):
+    def __init__(self, normalize=None, contrast="log1p", shrink=4, global_norm=True, log_clamp=-8, keep_nyquist=True, **kwargs):
         super(Magnitude, self).__init__()
         self.normalize = None
         self.constrast = contrast
@@ -1322,6 +1318,7 @@ class Magnitude(AudioTransform):
         self.shrink = shrink
         self.global_norm = global_norm
         self.log_clamp = log_clamp
+        self.keep_nyquist = keep_nyquist
 
     @property
     def needs_scaling(self):
@@ -1353,12 +1350,14 @@ class Magnitude(AudioTransform):
         if isinstance(x, list):
             return apply_transform_to_list(self, x, time=time, sr=sr)
         out = self.preprocess(x)
+        if not self.keep_nyquist:
+            out = out[..., 1:]
         if self.normalize is not None:
             out = self.normalize(out)
         if time is None:
-            return out
+            return out.float()
         else:
-            return out, time
+            return out.float(), time
 
     def invert(self, x, time=None, sr=None):
         if isinstance(x, list):
@@ -1372,6 +1371,63 @@ class Magnitude(AudioTransform):
             x = torch.expm1(x)*self.shrink
         else:
             raise ValueError('constrast %s not valid for Magnitude transform'%self.constrast)
+        if not self.keep_nyquist:
+            x = torch.cat([torch.zeros(*x.shape[:-1], 1, dtype=x.dtype, device=x.device), x], dim=-1)
+        if time is None:
+            return x
+        else:
+            return x, time
+
+
+class MelMagnitude(Magnitude):
+    def __init__(self, normalize=None, contrast="log1p", shrink=4, global_norm=True, log_clamp=-8, n_mels=None, 
+                 sample_rate=44100, nfft=2048, f_min = 0.0, f_max = None, mel_scale = "htk", norm=None, 
+                 keep_nyquist=True, **kwargs):
+        super().__init__(normalize, contrast, shrink, global_norm, log_clamp, **kwargs)
+        self.nfft = nfft
+        self.n_mels = n_mels or self.nfft 
+        self.f_min = f_min or 0.0
+        self.mel_scale = mel_scale or "htk"
+        self.keep_nyquist = keep_nyquist
+        self.sample_rate = sample_rate
+        self.f_max = f_max or float(sample_rate // 2)
+        self.norm = None if self.mel_scale == "htk" else norm
+        self.fb = torchaudio.functional.melscale_fbanks(self.nfft, self.f_min, self.f_max, self.n_mels, self.sample_rate, self.norm, self.mel_scale)
+        self.inverse_melscale = torchaudio.transforms.InverseMelScale(
+            self.nfft, n_mels=self.n_mels, sample_rate=self.sample_rate, f_min=self.f_min, f_max=self.f_max, norm=self.norm, mel_scale=self.mel_scale
+        )
+
+    def preprocess(self, x):
+        if isinstance(x, np.ndarray):
+            x = torch.from_numpy(x)
+        x = x.abs().to(torch.get_default_dtype())
+        x = torch.matmul(x, self.fb)
+        if not self.keep_nyquist:
+            x = x[..., 1:]
+        if self.constrast is None:
+            return x
+        elif self.constrast == "log":
+            return torch.clamp(torch.log(x/self.shrink), self.log_clamp)
+        elif self.constrast == "log1p":
+            return torch.log1p(x/self.shrink)
+        else:
+            raise ValueError('constrast %s not valid for Magnitude transform'%self.constrast)
+
+    def invert(self, x, time=None, sr=None):
+        if isinstance(x, list):
+            return [self.invert(x_i) for x_i in x]
+        if self.normalize is not None:
+            x = self.normalize.invert(x)
+        if self.constrast == "log":
+            x[x <= self.log_clamp] = -torch.inf
+            x = torch.exp(x)*self.shrink
+        elif self.constrast == "log1p":
+            x = torch.expm1(x)*self.shrink
+        else:
+            raise ValueError('constrast %s not valid for Magnitude transform'%self.constrast)
+        if not self.keep_nyquist:
+            x = torch.cat([torch.zeros((*x.shape[:-1], 1), device=x.device, dtype=x.dtype), x], dim=-1)
+        x = self.inverse_melscale(x.float().transpose(-2, -1)).transpose(-2, -1)
         if time is None:
             return x
         else:
@@ -1379,12 +1435,13 @@ class Magnitude(AudioTransform):
 
 
 class Phase(AudioTransform):
-    def __init__(self, unwrap=True, normalize=None,**kwargs):
+    def __init__(self, unwrap=True, normalize=None, keep_nyquist=True, **kwargs):
         super(Phase, self).__init__()
         self.unwrap = unwrap
         self.normalize = None
         if normalize is not None:
             self.normalize = Normalize(**normalize)
+        self.keep_nyquist = keep_nyquist
 
     def scale(self, x):
         if isinstance(x, list):
@@ -1406,6 +1463,8 @@ class Phase(AudioTransform):
             phase = unwrap(phase)
 
         # ax[0].imshow(phase[0], aspect="auto")
+        if not self.keep_nyquist:
+            phase = phase[..., 1:]
         if self.normalize is not None:
             phase = self.normalize(phase)
         return phase
@@ -1413,7 +1472,8 @@ class Phase(AudioTransform):
     def invert(self, x, *args, **kwargs):
         if self.normalize is not None:
             x = self.normalize.invert(x)
-
+        if not self.keep_nyquist:
+            x = torch.cat([torch.zeros(*x.shape[:-1], 1, dtype=x.dtype, device=x.device), x], dim=-1)
         # ax[1].imshow(x[0], aspect="auto")
         if self.unwrap:
             x = torch.fmod(x, 2*torch.pi)
@@ -1426,13 +1486,14 @@ class InstantaneousFrequency(AudioTransform):
     def __repr__(self):
         return "<preprocessing InstantaneousFrequency with method: %s, normalize: %s, mode: %s>"%(self.method, self.normalize, self.mode)
 
-    def __init__(self, method="backward", wrap=False, weighted = False, normalize=None, mode=None):
+    def __init__(self, method="backward", wrap=False, weighted = False, normalize=None, mode=None, keep_nyquist=True):
         assert method in self.methods
         self.method = method
         self.wrap = wrap
         self.weighted = weighted
         self.normalize = normalize
         self.mode = mode
+        self.keep_nyquist = keep_nyquist
         if self.normalize is not None:
             self.normalize = Normalize(**normalize)
 
@@ -1455,7 +1516,7 @@ class InstantaneousFrequency(AudioTransform):
                 inst_f = fdiff(phase, order=1)
                 inst_f[1:] /= torch.pi
             elif self.method == "forward":
-                inst_f = torch.flip(fdiff(torch.flip(phase, axis=0), order=1), axis=0)
+                inst_f = torch.flip(fdiff(torch.flip(phase, 0), order=1), axis=0)
                 inst_f[:-1] /= -torch.pi
             if self.method == "central":
                 inst_f = fdiff(phase, order=2)
@@ -1480,6 +1541,8 @@ class InstantaneousFrequency(AudioTransform):
             return [self(x_i) for x_i in data]
         if batch_first:
             return torch.stack([self(data[i], batch_first=False) for i in range(data.shape[0])])
+        if not self.keep_nyquist:
+            phase = phase[..., 1:]
         inst_f = self.get_if(data)
         if self.normalize is not None:
             inst_f = self.normalize(inst_f)
@@ -1509,7 +1572,8 @@ class InstantaneousFrequency(AudioTransform):
         elif self.method == "central":
             data[1:-1] *= torch.pi
             phase = fint(data, order=2)
-
+        if not self.keep_nyquist:
+            data = torch.cat([torch.zeros(*data.shape[:-1], 1, dtype=data.dtype, device=data.device), data], dim=-1)
         return phase
 
 
@@ -1518,11 +1582,12 @@ class Polar(AudioTransform):
     phase_transform = Phase
     invertible = True
 
-    def __init__(self, *args, mag_options={}, phase_options={}, stack=True, **kwargs):
+    def __init__(self, *args, mag_options={}, phase_options={}, keep_nyquist=True, stack=-3, **kwargs):
         super(Polar, self).__init__()
         self.transforms = [self.magnitude_transform(**mag_options),
                            self.phase_transform(**phase_options)]
         self.stack = stack
+        self.keep_nyquist = keep_nyquist
 
     def __getitem__(self, item):
         return self.transforms[item]
@@ -1532,19 +1597,23 @@ class Polar(AudioTransform):
         if isinstance(x, list):
             return apply_transform_to_list(self, x, time)
         out = [self.transforms[0](x), self.transforms[1](x)]
-        if self.stack:
-            out = torch.stack(out, dim=-3)
+        if not self.keep_nyquist:
+            out[0] = out[0][..., 1:]
+            out[1] = out[1][..., 1:]
+        if self.stack is not None:
+            out = torch.stack(out, dim=self.stack)
         if time is None:
             return out
         else:
             return out, time
 
     def invert(self, x, time=None, **kwargs):
-        if self.stack:
-            mag, phase = x[..., 0, :, :], x[..., 1, :, :]
-            mag, phase = self.transforms[0].invert(mag), self.transforms[1].invert(phase)
+        if self.stack is not None:
+            mag = x.index_select(self.stack, torch.LongTensor([0])).squeeze(self.stack)
+            phase = x.index_select(self.stack, torch.LongTensor([1])).squeeze(self.stack)
         else:
-            mag, phase = self.transforms[0].invert(x[0]), self.transforms[1].invert(x[1])
+            mag = x[0]; phase = x[1]
+        mag, phase = self.transforms[0].invert(mag), self.transforms[1].invert(phase)
         fft = mag*torch.exp(1j*phase)
         if time is None:
             return fft
@@ -1557,7 +1626,14 @@ class Polar(AudioTransform):
         self.transforms[1].scale(x)
 
 
+class PolarMel(Polar):
+    magnitude_transform = MelMagnitude
+
 class PolarInst(Polar):
+    phase_transform = InstantaneousFrequency
+
+class PolarMelInst(Polar):
+    magnitude_transform = MelMagnitude
     phase_transform = InstantaneousFrequency
 
 

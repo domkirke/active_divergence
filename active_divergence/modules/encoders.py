@@ -215,7 +215,7 @@ class ConvEncoder(nn.Module):
     def _init_flattening_modules(self):
         self.flatten_module = None
 
-        if self.reshape_method in ["flatten", "pgan"]:
+        if self.reshape_method in ["flatten", "pgan", "channel"]:
             current_shape = np.array(self.input_size[1:])
             for c in self.conv_modules:
                 current_shape = c.output_shape(current_shape)
@@ -549,7 +549,6 @@ class DeconvEncoder(nn.Module):
         final_shape = tuple(current_shape.tolist())
         if sum([f % 1.0 for f in final_shape]) > 0:
             print('[Warning] final shape for DeconvEncoder module is non-integer')
-
         if self.reshape_method == "flatten":
             assert self.target_shape is not None, "target_shape is required when reshape_method == flatten"
             assert self.input_size, "flattening modules needs the input dimensionality."
@@ -557,6 +556,13 @@ class DeconvEncoder(nn.Module):
                                                **self.config_flatten)
             reshape_module = Reshape(self.channels[0], *final_shape, incoming_dim=1)
             self.flatten_module = nn.Sequential(flatten_module, reshape_module)
+        elif self.reshape_method == "channel":
+            kernel_size = np.array(input_shape[1:])
+            padding = kernel_size - 1
+            assert (len(self.input_size) == 1, "channel unfold mode only works with an 1-d input")
+            self.flatten_module = layers.conv_hash['conv'][self.dim](self.input_size[0], self.channels[0],
+                                                                tuple(kernel_size), padding=tuple(padding))
+            self.input_size = (self.input_size[0], *(1,) * len(final_shape))
         elif self.reshape_method == "pgan":
             kernel_size = np.array(input_shape[1:])
             padding = kernel_size - 1
@@ -565,6 +571,7 @@ class DeconvEncoder(nn.Module):
                                                                 tuple(kernel_size), padding=tuple(padding))]
             for i in range(self.block_args[0].get('n_convs_per_block', 2) - 1):
                 flatten_module.append(layers.DeconvLayer([self.channels[0], self.channels[0]],
+                                                         dim = self.dim,
                                                          kernel_size=self.kernel_size[0],
                                                          bias=self.bias))
             #reshape_module = Reshape(self.channels[0], *final_shape, incoming_dim=self.dim + 1)

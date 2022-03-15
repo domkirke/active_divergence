@@ -101,7 +101,7 @@ class ImgReconstructionMonitor(Callback):
 class AudioReconstructionMonitor(Callback):
 
     def __init__(self, plot_reconstructions:bool = True, plot_samples: bool = True,
-                 generate_files: bool = True, generate_trajs: bool = True,
+                 generate_files: bool = True, generate_samples: bool = False, generate_trajs: bool = True,
                  n_reconstructions: int = 5, n_samples: int = 5, n_files: int  = 3, files_path: str = None,
                  temperature_range: Iterable[float]=None, monitor_epochs: int = 1, reconstruction_epochs: int = 5,
                  sample_reconstruction: bool = False, traj_file: str = None, traj_sr: int = 172, batch_size: int = 256):
@@ -131,6 +131,7 @@ class AudioReconstructionMonitor(Callback):
         self.n_reconstructions = n_reconstructions
         self.files_path = files_path
         self.generate_trajs = int(generate_trajs or 0)
+        self.generate_samples = generate_samples
         self.reconstruction_epochs = reconstruction_epochs
         self.traj_file = traj_file
         self.traj_sr = traj_sr
@@ -174,8 +175,13 @@ class AudioReconstructionMonitor(Callback):
         fig, ax = plt.subplots(self.n_samples, len(self.temperature_range))
         for i in range(self.n_samples):
             for j in range(len(self.temperature_range)):
-                ax[i, j].plot(out[i, j].squeeze().cpu())
-        return fig
+                if len(out[i, j].shape) == 1:
+                    ax[i, j].plot(out[i, j].squeeze().cpu())
+                elif len(out[i, j].shape) == 2:
+                    ax[i, j].imshow(out[i, j].squeeze().cpu(), aspect="auto")
+                ax[i, j].set(xticklabels=[])
+                ax[i, j].set(yticklabels=[])
+        return fig, out
 
     def reconstruct_file(self, model, files, dataset):
         originals = []; generations = []
@@ -244,8 +250,17 @@ class AudioReconstructionMonitor(Callback):
             # plot prior sampling
             if hasattr(model, 'sample_from_prior'):
                 if self.plot_samples:
-                    samples = self.plot_samps(model)
+                    samples, outs = self.plot_samps(model)
                     trainer.logger.experiment.add_figure('samples', samples, trainer.current_epoch)
+                    if self.generate_samples:
+                        outs = outs.reshape(outs.shape[0]*outs.shape[1], *outs.shape[2:]).cpu()
+                        samples_raw = []
+                        for sample in outs:
+                            samples_raw.append(dataset.invert_transform(sample))
+                        samples_raw = torch.cat(samples_raw, -1)
+                        if len(samples_raw.shape) == 2:
+                            samples_raw = samples_raw[0]
+                        trainer.logger.experiment.add_audio('audio_samples', samples_raw, global_step=trainer.current_epoch, sample_rate=dataset.sr)
 
             # generate trajectories
             if hasattr(model, 'decode'):

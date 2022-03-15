@@ -1,7 +1,6 @@
 defaults:
   - generator/adv_upsample_conv
   - discriminator/adv_downsample_conv
-  - training/gan_adv
 
 type: ProgressiveGAN
 latent:

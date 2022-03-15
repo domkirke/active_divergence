@@ -50,8 +50,9 @@ class Unsqueeze(nn.Module):
         return torch.unsqueeze(x, self.dim)
 
 from .activations import *
+from .misc import *
 from .dist import *
 from .layers import *
 from .encoders import MLPEncoder, MLPDecoder, ConvEncoder, DeconvEncoder
 from .inversion import MCNN
-from .oneshots import *
+#from .oneshots import *

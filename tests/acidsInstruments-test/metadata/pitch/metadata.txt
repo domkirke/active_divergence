@@ -1,0 +1,6 @@
+data/Strings/Violoncello/ordinario/Vc-ord-F4-ff.wav	8
+data/Strings/Violoncello/ordinario/Vc-ord-G3-ff.wav	10
+data/Keyboards/Piano/ordinario/Pno-ord-F2-pp.wav	8
+data/Keyboards/Piano/ordinario/Pno-ord-G5-pp.wav	10
+data/Brass/English-Horn/ordinario/EH_nA-4_120-F#5-ff.wav	9
+data/Brass/English-Horn/ordinario/EH_nA-4_120-G4-pp.wav	10

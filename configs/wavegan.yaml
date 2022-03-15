@@ -1,5 +1,6 @@
 name: ??
 rundir: "${dir:runtime}/saves/${name}"
+num_workers: 46
 
 hydra:
   job:
@@ -13,38 +14,47 @@ hydra:
 defaults:
   - data:
     - defaults
-  - model: gan
+  - model: 
+    - dcgan
+    - training/gan_wasserstein
   - callbacks: audio_defaults
   - _self_
 
 data:
+  dataset:
+    sr: 16000
+    bitrate: 16
+    sequence:
+      length: 16384
+      mode: random
+      idx: -1
   transforms:
+    force: 0
     name: resampled_16k
     pre_transforms:
       - {type: Mono, args:{mode: left}}
   augmentations:
     - {type: Dequantize}
-  dataset:
-    sr: 16000
-    bitrate: 16
-    sequence:
-      length: 1024
-      mode: random
-      idx: -1
+  loader:
+    num_workers: "${num_workers}"
 
-# here we add specific parameters for the decoder's output (softplus + normal distribution).
 model:
   discriminator:
+    input_augmentations: 
+      - {type: PhaseShuffle, args: {dim: -1}}
     args:
       norm: none
+      channels: [64,128,256,512,1024]
+      kernel_size: 25
+      stride: 4
   generator:
     args:
-      out_nnlin: Tanh
       norm: none
-      block_args:
-        upsample: 2
-        mode: linear
-        n_convs_per_block: 2
+      channels: [64,128,256,512,1024]
+      kernel_size: 25
+      stride: 4
+      out_nnlin: Tanh
+
   latent:
     dim: 128
     dist: Normal
@@ -54,6 +64,7 @@ model:
 
 pl_trainer:
   max_epochs: 1e5
+  gpus: [2]
   limit_train_batches: 1
   limit_val_batches: 1
 
