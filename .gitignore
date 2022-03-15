@@ -2,3 +2,4 @@
 */__pycache__/*
 *.pyo
 saves/*
+*/.DS_Store

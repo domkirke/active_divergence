@@ -1516,7 +1516,7 @@ class InstantaneousFrequency(AudioTransform):
                 inst_f = fdiff(phase, order=1)
                 inst_f[1:] /= torch.pi
             elif self.method == "forward":
-                inst_f = torch.flip(fdiff(torch.flip(phase, 0), order=1), axis=0)
+                inst_f = torch.flip(fdiff(torch.flip(phase, (0,)), order=1), (0,))
                 inst_f[:-1] /= -torch.pi
             if self.method == "central":
                 inst_f = fdiff(phase, order=2)
@@ -1536,14 +1536,19 @@ class InstantaneousFrequency(AudioTransform):
 
         return inst_f
 
-    def __call__(self, data, batch_first=False, **kwargs):
+    def __call__(self, data, **kwargs):
+        batch_first = len(data.shape) > 2
         if isinstance(data, list):
             return [self(x_i) for x_i in data]
-        if batch_first:
-            return torch.stack([self(data[i], batch_first=False) for i in range(data.shape[0])])
         if not self.keep_nyquist:
-            phase = phase[..., 1:]
-        inst_f = self.get_if(data)
+            data = data[..., 1:]
+        if batch_first:
+            batch_shape = data.shape[:-2]
+            data = data.view(-1, *data.shape[-2:])
+            inst_f = torch.stack([self.get_if(data[i]) for i in range(data.shape[0])])
+            inst_f = inst_f.view(*batch_shape, *data.shape[-2:])
+        else:
+            inst_f = self.get_if(data)
         if self.normalize is not None:
             inst_f = self.normalize(inst_f)
         return inst_f
@@ -1552,10 +1557,10 @@ class InstantaneousFrequency(AudioTransform):
         if issubclass(type(data), list):
             return [self.invert(x, batch_first=batch_first) for x in data]
         if batch_first:
-            if torch.is_tensor(data):
-                return torch.stack([self.invert(data[i], batch_first=False) for i in range(data.shape[0])])
-            else:
-                return torch.stack([self.invert(data[i], batch_first=False) for i in range(data.shape[0])])
+            batch_shape = data.shape[:-2]
+            data = data.view(-1, *data.shape[-2:])
+            data = torch.stack([self.invert(data[i], batch_first=False) for i in range(data.shape[0])])
+            data = data.view(*batch_shape, *data.shape[-2:])
         if self.normalize:
             data = self.normalize.invert(data)
         if self.wrap:
@@ -1565,10 +1570,7 @@ class InstantaneousFrequency(AudioTransform):
             phase = fint(data, order=1)
         if self.method == "forward":
             data[:-1] *= -torch.pi
-            if torch.is_tensor(data):
-                phase = torch.flip(fint(torch.flip(data, axis=0), order=1), axis=0)
-            else:
-                phase = torch.flip(fint(torch.flip(data, axis=0), order=1), axis=0)
+            phase = torch.flip(fint(torch.flip(data, (0,))), (0,))
         elif self.method == "central":
             data[1:-1] *= torch.pi
             phase = fint(data, order=2)
