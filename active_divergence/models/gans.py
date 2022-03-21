@@ -490,8 +490,6 @@ class ProgressiveGAN(GAN):
         # generate
         z = self.sample_prior(batch=batch)
         out = self.generate(batch, z)
-        # update discriminator
-
         # downsample image in case
         if self._current_phase is not None and self._current_phase != len(self.config.training.training_schedule):
             batch = self._get_discriminator_downsamples(self._current_phase)(batch)

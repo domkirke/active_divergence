@@ -1350,6 +1350,7 @@ class Magnitude(AudioTransform):
         if isinstance(x, list):
             return apply_transform_to_list(self, x, time=time, sr=sr)
         out = self.preprocess(x)
+        out_mem = out
         if not self.keep_nyquist:
             out = out[..., 1:]
         if self.normalize is not None:
@@ -1401,6 +1402,7 @@ class MelMagnitude(Magnitude):
         if isinstance(x, np.ndarray):
             x = torch.from_numpy(x)
         x = x.abs().to(torch.get_default_dtype())
+        x_retain = x
         x = torch.matmul(x, self.fb)
         if not self.keep_nyquist:
             x = x[..., 1:]
@@ -1508,6 +1510,8 @@ class InstantaneousFrequency(AudioTransform):
     def get_if(self, data):
         if issubclass(type(data), list):
             return [self.get_if(i) for i in data]
+        if isinstance(data, np.ndarray):
+            data = torch.from_numpy(data).to(torch.get_default_dtype())
 
         if self.method in ['forward', 'backward', 'central']:
             phase = unwrap(torch.angle(data))
@@ -1583,6 +1587,9 @@ class Polar(AudioTransform):
     magnitude_transform = Magnitude
     phase_transform = Phase
     invertible = True
+    @property
+    def needs_scaling(self):
+        return self.transforms[0].needs_scaling or self.transforms[1].needs_scaling
 
     def __init__(self, *args, mag_options={}, phase_options={}, keep_nyquist=True, stack=-3, **kwargs):
         super(Polar, self).__init__()
@@ -1615,6 +1622,9 @@ class Polar(AudioTransform):
             phase = x.index_select(self.stack, torch.LongTensor([1])).squeeze(self.stack)
         else:
             mag = x[0]; phase = x[1]
+        if not self.keep_nyquist:
+            phase = torch.cat([torch.zeros((*phase.shape[:-1], 1), device=phase.device, dtype=phase.dtype), phase], -1)
+            mag = torch.cat([torch.zeros((*mag.shape[:-1], 1), device=mag.device, dtype=mag.dtype), mag], -1)
         mag, phase = self.transforms[0].invert(mag), self.transforms[1].invert(phase)
         fft = mag*torch.exp(1j*phase)
         if time is None:

@@ -104,7 +104,8 @@ class AudioReconstructionMonitor(Callback):
                  generate_files: bool = True, generate_samples: bool = False, generate_trajs: bool = True,
                  n_reconstructions: int = 5, n_samples: int = 5, n_files: int  = 3, files_path: str = None,
                  temperature_range: Iterable[float]=None, monitor_epochs: int = 1, reconstruction_epochs: int = 5,
-                 sample_reconstruction: bool = False, traj_file: str = None, traj_sr: int = 172, batch_size: int = 256):
+                 sample_reconstruction: bool = False, traj_file: str = None, traj_sr: int = 172, batch_size: int = 256,
+                 generate_after_n_epochs: int = 0):
         """
         Callback for audio reconstruction monitoring.
         Args:
@@ -142,6 +143,7 @@ class AudioReconstructionMonitor(Callback):
         self.n_samples = n_samples
         self.temperature_range = temperature_range or [0.01, 0.1, 0.5, 1.0, 1.5, 3.0, 5.0, 10.0]
         self.monitor_epochs = monitor_epochs
+        self.generate_after_n_epochs = generate_after_n_epochs or 0
 
     def plot_rec(self, model, loader):
         data = next(loader(batch_size=self.n_reconstructions).__iter__())
@@ -169,7 +171,8 @@ class AudioReconstructionMonitor(Callback):
         return fig
 
     def plot_samps(self, model):
-        out = model.sample_from_prior(n_samples=self.n_samples, temperature=self.temperature_range)
+        with torch.no_grad():
+            out = model.sample_from_prior(n_samples=self.n_samples, temperature=self.temperature_range)
         if isinstance(out, dist.Distribution):
             out = out.mean
         fig, ax = plt.subplots(self.n_samples, len(self.temperature_range))
@@ -224,6 +227,7 @@ class AudioReconstructionMonitor(Callback):
             if trainer.current_epoch % self.monitor_epochs != 0:
                 return
             model = trainer.model
+            epoch = trainer.current_epoch
             if hasattr(trainer.datamodule, "dataset"):
                 dataset = trainer.datamodule.dataset
             else:
@@ -238,7 +242,7 @@ class AudioReconstructionMonitor(Callback):
                     if trainer.datamodule.test_dataset:
                         test_rec = self.plot_rec(model, trainer.datamodule.test_dataloader)
                         trainer.logger.experiment.add_figure('reconstructions/test', test_rec, trainer.current_epoch)
-                if self.generate_files:
+                if self.generate_files and epoch > self.generate_after_n_epochs:
                     if trainer.current_epoch % self.reconstruction_epochs == 0:
                         if dataset is not None:
                             files = random.choices(dataset.files, k=self.n_files)
@@ -248,7 +252,7 @@ class AudioReconstructionMonitor(Callback):
                                                                 sample_rate=dataset.sr)
 
             # plot prior sampling
-            if hasattr(model, 'sample_from_prior'):
+            if hasattr(model, 'sample_from_prior') and epoch >= self.generate_after_n_epochs:
                 if self.plot_samples:
                     samples, outs = self.plot_samps(model)
                     trainer.logger.experiment.add_figure('samples', samples, trainer.current_epoch)
@@ -264,7 +268,7 @@ class AudioReconstructionMonitor(Callback):
 
             # generate trajectories
             if hasattr(model, 'decode'):
-                if self.generate_trajs and trainer.current_epoch % self.generate_trajs == 0:
+                if self.generate_trajs and trainer.current_epoch % self.generate_trajs == 0 and epoch >= self.generate_after_n_epochs:
                     if self.traj_file is None or not os.path.isfile(os.path.abspath(self.traj_file)):
                         print('[Warning] trajectory file missing : %s'%self.traj_file)
                     else:

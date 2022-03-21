@@ -65,7 +65,10 @@ class DissectionMonitor(Callback):
                 return
             # plot model parameters distribution
             for k, v  in trainer.model.named_parameters():
-                trainer.logger.experiment.add_histogram("params/"+k, v, global_step=trainer.current_epoch)
+                if v.isnan().any():
+                    print("[Warning] parameter %s has a nan value.")
+                else: 
+                    trainer.logger.experiment.add_histogram("params/"+k, v, global_step=trainer.current_epoch)
             n_batch = 0
             traces = []
             if not hasattr(trainer.model, "trace"):

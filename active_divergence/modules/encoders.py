@@ -283,7 +283,7 @@ class ConvEncoder(nn.Module):
             if i == 0 and transition:
                 if hasattr(conv_module, "downsample"):
                     out_orig = conv_module.downsample(out_orig)
-                out = transition * out + (1 - transition) * self.pre_conv[i](out_orig)
+                out = transition * out + (1 - transition) * self.pre_conv[i+1](out_orig)
 
             if self.mode in ['residual']:
                 if hasattr(conv_module, "downsample"):
@@ -545,10 +545,10 @@ class DeconvEncoder(nn.Module):
                     print('[Warning] could not create flattening module, but reshape_method=%s"%self.reshape_method')
                 return
         self.flatten_module = None
+        if sum([f % 1.0 for f in current_shape]) > 0:
+            print('[Warning] final shape for DeconvEncoder module is non-integer')
         input_shape = (self.channels[0], *([math.ceil(i) for i in current_shape]))
         final_shape = tuple(current_shape.tolist())
-        if sum([f % 1.0 for f in final_shape]) > 0:
-            print('[Warning] final shape for DeconvEncoder module is non-integer')
         if self.reshape_method == "flatten":
             assert self.target_shape is not None, "target_shape is required when reshape_method == flatten"
             assert self.input_size, "flattening modules needs the input dimensionality."

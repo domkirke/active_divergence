@@ -451,7 +451,7 @@ class AudioDataset(Dataset):
         self.files = files
         self.hash = {self.files[i]:i for i in range(len(self.files))}
 
-    def import_data(self, scale: bool = None, write_transforms: bool = False,
+    def import_data(self, scale: bool = True, write_transforms: bool = False,
                     save_transform_as: str = None, min_len: int = None, force: bool = False) -> None:
         """
         Import data listed in dataset files.
