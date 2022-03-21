@@ -183,7 +183,9 @@ class GAN(Model):
         if self.config.training.mode == "adv":
             labels_real, labels_fake = self.get_labels(d_real, phase=1)
             true_loss = nn.functional.binary_cross_entropy(d_real, labels_real)
+            # true_loss = F.softplus(-d_real)
             fake_loss = nn.functional.binary_cross_entropy(d_fake, labels_fake)
+            # fake_loss = F.softplus(d_fake)
             disc_loss = (true_loss + fake_loss) / 2
         elif self.config.training.mode == "hinge":
             true_loss = torch.relu(1 - d_real).mean()
@@ -245,6 +247,7 @@ class GAN(Model):
         if self.config.training.mode == "adv":
             labels_real = self.get_labels(d_fake, phase=0)
             gen_loss = nn.functional.binary_cross_entropy(d_fake, labels_real)
+            # gen_loss = -F.softplus(d_fake)
         elif self.config.training.mode == "hinge":
             gen_loss = -d_fake.mean()
         elif self.config.training.mode == "wasserstein":
@@ -658,7 +661,8 @@ class ModulatedGAN(ProgressiveGAN):
         return z.to(self.device)
 
     def get_modulations(self, z, trace=None):
-        #TODO implement style mixing
+        # In original, code, z is normalized before being fed to encoder
+        #x *= tf.rsqrt(tf.reduce_mean(tf.square(x), axis=1, keepdims=True) + 1e-8)
         if self.config.encoder.mode == "sequential":
             if isinstance(z, tuple):
                 styles = tuple([self.encoder(z_tmp) for z_tmp in z])

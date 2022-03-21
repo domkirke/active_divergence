@@ -52,7 +52,7 @@ model:
       block_args:
         upsample: 2
         n_convs_per_block: 2
-      nn_lin: ReLU 
+      nn_lin: LeakyReLU
       out_nnlin: Tanh
   latent:
     dim: 128
