@@ -32,6 +32,7 @@ model:
   discriminator:
     type: ConvEncoder
     args:
+      mode: forward
       channels: [64,64,64,64]
       kernel_size: [5,5,5]
       norm: pixel
@@ -45,6 +46,7 @@ model:
   generator:
     type: DeconvEncoder
     args:
+      mode: forward
       channels: [64,64,64,64]
       kernel_size: [5,5,5]
       norm: pixel
@@ -58,20 +60,21 @@ model:
     dim: 128
     dist: Normal
   training:
-    mode: "adv"
+    mode: "logistic"
     balance: [1, 1]
-    lr: [1.e-5, 2.e-5]
+    lr: [1.e-5, 1.e-5]
     gp: 10.0
-    path_length: 2.0
-    reg_period: 5
+    path_length: 0.0
+    reg_period: 10
     training_schedule: [50,200]
     transition_schedule: [100,200]
+    phase_at_init: 2
+    transition_at_init: 0
     #training_schedule: [2,2]
     #transition_schedule: [1,1]
+
 
 pl_trainer:
   max_epochs: 1e5
   gpus: [2]
-  #limit_train_batches: 10
-  #limit_val_batches: 10
 

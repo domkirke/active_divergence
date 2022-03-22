@@ -21,11 +21,11 @@ def parse_additional_losses(config):
 
 
 class GAN(Model):
-    gan_modes = ['adv', 'hinge', 'wasserstein']
+    gan_modes = ['logistic', 'hinge', 'wasserstein']
 
     def __init__(self, config=None):
         """
-        Main class for Generative Adversarial Networks (GAN). The configuration must include:
+        Main class for Generative logisticersarial Networks (GAN). The configuration must include:
         - generator
         - discriminator
         - latent
@@ -65,7 +65,7 @@ class GAN(Model):
             self.input_augmentations = nn.Sequential(*input_augmentations)
         # setup training
         config.training = config.get('training')
-        config.training.mode = config.training.get('mode', 'adv')
+        config.training.mode = config.training.get('mode', 'logistic')
         assert config.training.mode in self.gan_modes
         self.automatic_optimization = False
         self.reconstruction_losses = parse_additional_losses(config.training.get('rec_losses'))
@@ -180,12 +180,12 @@ class GAN(Model):
         return self.discriminator(x, return_hidden=return_hidden, trace=trace)
 
     def discriminator_loss(self, discriminator, batch, generation, d_real, d_fake, drop_detail=False, batch_idx=0):
-        if self.config.training.mode == "adv":
+        if self.config.training.mode in ["logistic", "logistic_ns"]:
             labels_real, labels_fake = self.get_labels(d_real, phase=1)
-            true_loss = nn.functional.binary_cross_entropy(d_real, labels_real)
-            # true_loss = F.softplus(-d_real)
-            fake_loss = nn.functional.binary_cross_entropy(d_fake, labels_fake)
-            # fake_loss = F.softplus(d_fake)
+            #true_loss = nn.functional.binary_cross_entropy(d_real, labels_real)
+            true_loss = F.softplus(-d_real).mean()
+            fake_loss = F.softplus(d_fake).mean()
+            #fake_loss = nn.functional.binary_cross_entropy(d_fake, labels_fake)
             disc_loss = (true_loss + fake_loss) / 2
         elif self.config.training.mode == "hinge":
             true_loss = torch.relu(1 - d_real).mean()
@@ -244,10 +244,12 @@ class GAN(Model):
                     p.data.clamp_(-clip_value, clip_value)
 
     def generator_loss(self, generator, batch, out, d_fake, z, hidden=None, drop_detail=False, batch_idx=0):
-        if self.config.training.mode == "adv":
+        if self.config.training.mode == "logistic":
             labels_real = self.get_labels(d_fake, phase=0)
-            gen_loss = nn.functional.binary_cross_entropy(d_fake, labels_real)
-            # gen_loss = -F.softplus(d_fake)
+            #gen_loss = nn.functional.binary_cross_entropy(d_fake, labels_real)
+            gen_loss = -F.softplus(d_fake).mean()
+        elif self.config.training.mode == "logistic_ns":
+            gen_loss = F.softplus(-d_fake).mean()
         elif self.config.training.mode == "hinge":
             gen_loss = -d_fake.mean()
         elif self.config.training.mode == "wasserstein":
@@ -550,17 +552,21 @@ class ProgressiveGAN(GAN):
         return loss
 
     def on_train_start(self):
-        self._current_phase = 0
         self._phase_counter = 0
+        self._current_phase = self.config.training.get('phase_at_init', 0)
         # no transition at first epoch
         if self._current_phase == 0:
-            self._transition = 0
+            self._transition = self.config.training.get('transition_at_init', 0)
             self.current_generator = self._get_sub_generator(self._current_phase)
             self.current_discriminator = self._get_sub_discriminator(self._current_phase)
         else:
-            self._transition = 1
-            self.current_generator = self._get_sub_generator(self._current_phase - 1)
-            self.current_discriminator = self._get_sub_discriminator(self._current_phase - 1)
+            self._transition = self.config.training.get('transition_at_init', 1)
+            if self._transition:
+                self.current_generator = self._get_sub_generator(self._current_phase - 1)
+                self.current_discriminator = self._get_sub_discriminator(self._current_phase - 1)
+            else:
+                self.current_generator = self._get_sub_generator(self._current_phase)
+                self.current_discriminator = self._get_sub_discriminator(self._current_phase)
 
     def on_validation_start(self):
         if self._current_phase is None:
@@ -661,8 +667,7 @@ class ModulatedGAN(ProgressiveGAN):
         return z.to(self.device)
 
     def get_modulations(self, z, trace=None):
-        # In original, code, z is normalized before being fed to encoder
-        #x *= tf.rsqrt(tf.reduce_mean(tf.square(x), axis=1, keepdims=True) + 1e-8)
+        #TODO implement style mixing
         if self.config.encoder.mode == "sequential":
             if isinstance(z, tuple):
                 styles = tuple([self.encoder(z_tmp) for z_tmp in z])
