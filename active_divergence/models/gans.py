@@ -21,7 +21,7 @@ def parse_additional_losses(config):
 
 
 class GAN(Model):
-    gan_modes = ['logistic', 'hinge', 'wasserstein']
+    gan_modes = ['logistic', 'hinge', 'wasserstein', 'softplus', 'softplus-ns']
 
     def __init__(self, config=None):
         """
@@ -182,11 +182,13 @@ class GAN(Model):
     def discriminator_loss(self, discriminator, batch, generation, d_real, d_fake, drop_detail=False, batch_idx=0):
         if self.config.training.mode in ["logistic", "logistic_ns"]:
             labels_real, labels_fake = self.get_labels(d_real, phase=1)
-            #true_loss = nn.functional.binary_cross_entropy(d_real, labels_real)
+            true_loss = nn.functional.binary_cross_entropy(d_real, labels_real)
+            fake_loss = nn.functional.binary_cross_entropy(d_fake, labels_fake)
+            disc_loss = (true_loss + fake_loss) 
+        elif self.config.training.mode in ["softplus", "softplus_ns"]:
             true_loss = F.softplus(-d_real).mean()
             fake_loss = F.softplus(d_fake).mean()
-            #fake_loss = nn.functional.binary_cross_entropy(d_fake, labels_fake)
-            disc_loss = (true_loss + fake_loss) / 2
+            disc_loss = (true_loss + fake_loss) 
         elif self.config.training.mode == "hinge":
             true_loss = torch.relu(1 - d_real).mean()
             fake_loss = torch.relu(1 + d_fake).mean()
@@ -246,9 +248,10 @@ class GAN(Model):
     def generator_loss(self, generator, batch, out, d_fake, z, hidden=None, drop_detail=False, batch_idx=0):
         if self.config.training.mode == "logistic":
             labels_real = self.get_labels(d_fake, phase=0)
-            #gen_loss = nn.functional.binary_cross_entropy(d_fake, labels_real)
+            gen_loss = nn.functional.binary_cross_entropy(d_fake, labels_real)
+        elif self.config.training.mode == "softplus":
             gen_loss = -F.softplus(d_fake).mean()
-        elif self.config.training.mode == "logistic_ns":
+        elif self.config.training.mode == "softplus_ns":
             gen_loss = F.softplus(-d_fake).mean()
         elif self.config.training.mode == "hinge":
             gen_loss = -d_fake.mean()
@@ -667,7 +670,6 @@ class ModulatedGAN(ProgressiveGAN):
         return z.to(self.device)
 
     def get_modulations(self, z, trace=None):
-        #TODO implement style mixing
         if self.config.encoder.mode == "sequential":
             if isinstance(z, tuple):
                 styles = tuple([self.encoder(z_tmp) for z_tmp in z])

@@ -24,7 +24,7 @@ data:
   dataset:
     resize: [32,32]
   loader:
-    batch_size: 16
+    batch_size: 32
     num_workers: 0
 
 # here we add specific parameters for the decoder's output (softplus + normal distribution).
@@ -32,40 +32,41 @@ model:
   discriminator:
     type: ConvEncoder
     args:
-      mode: forward
+      mode: residual
       channels: [64,64,64,64]
       kernel_size: [5,5,5]
       norm: pixel
       #bias: False
       block_args:
         downsample: 2
-        n_convs_per_block: 2
+        n_convs_per_block: 1
       nn_lin: LeakyReLU
       # remove if wasserstein!
-      out_nnlin: Sigmoid
+      #out_nnlin: Sigmoid
   generator:
     type: DeconvEncoder
     args:
-      mode: forward
+      mode: skip
       channels: [64,64,64,64]
       kernel_size: [5,5,5]
       norm: pixel
       #bias: False
       block_args:
         upsample: 2
-        n_convs_per_block: 2
+        n_convs_per_block: 1
       nn_lin: LeakyReLU
       out_nnlin: Tanh
   latent:
     dim: 128
     dist: Normal
   training:
-    mode: "logistic"
+    mode: "wasserstein"
     balance: [1, 1]
     lr: [1.e-5, 1.e-5]
+    #r1: 10.0
     gp: 10.0
-    path_length: 0.0
-    reg_period: 10
+    path_length: 2.0
+    reg_period: 20
     training_schedule: [50,200]
     transition_schedule: [100,200]
     phase_at_init: 2

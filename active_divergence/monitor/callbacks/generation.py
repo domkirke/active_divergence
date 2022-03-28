@@ -55,12 +55,13 @@ class ImgReconstructionMonitor(Callback):
         out = torch.stack([x_original, *x_out], 0).reshape((len(x_out) + 1) * x_original.shape[0], *x_original.shape[1:])
         return tv.utils.make_grid(out, nrow=x_original.shape[0], value_range=value_range)
 
-    def plot_samples(self, model):
+    def plot_samples(self, model, datamodule):
         out = model.sample_from_prior(n_samples=self.n_samples, temperature=self.temperature_range)
         if isinstance(out, dist.Distribution):
             out = out.mean
         #out = out.transpose(0, 1)
         out = out.reshape(out.size(0) * out.size(1), *out.shape[2:])
+        out = datamodule.transforms.invert(out)
         full_img = tv.utils.make_grid(out, nrow=self.n_samples, value_range=[0, 1]) 
         return full_img
 
@@ -93,7 +94,7 @@ class ImgReconstructionMonitor(Callback):
 
             # plot prior sampling
             if hasattr(model, 'sample_from_prior'):
-                samples = self.plot_samples(model)
+                samples = self.plot_samples(model, trainer.datamodule)
                 trainer.logger.experiment.add_image('samples', samples, trainer.current_epoch)
 
 
