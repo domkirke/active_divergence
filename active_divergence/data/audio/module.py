@@ -31,6 +31,7 @@ def parse_augmentations(augmentation_list):
         current_augmentations.append(augmentation_tmp)
     return current_augmentations
 
+
 class AudioDataModule(LightningDataModule):
     def __init__(self, config, **kwargs):
         super().__init__()
@@ -47,34 +48,28 @@ class AudioDataModule(LightningDataModule):
         self.import_datasets()
 
     def load_dataset(self, dataset_args, transform_args, augmentation_args, make_partitions=False):
-        dataset = AudioDataset(**dataset_args)
+        dataset = AudioDataset(config=dataset_args)
         if dataset_args.get('check_folder'):
             dataset.check_audio_folder()
-
         pre_transforms = transforms.ComposeAudioTransform()
         if transform_args.get('pre_transforms'):
             name = transform_args.get('name')
-            if name in dataset.available_transforms and (not transform_args.force):
+            if name in dataset.available_transforms and (not transform_args.get('force')):
                 pre_transforms = dataset.import_transform(name)
             else:
                 assert name is not None
                 pre_transforms = parse_transforms(transform_args.pre_transforms) or transforms.AudioTransform()
                 dataset.transforms = pre_transforms
-                dataset.import_data(write_transforms=True, save_transform_as=name, force=transform_args.force, min_len=self.dataset_args.get('min_length'))
+                dataset.import_data(write_transforms=True, save_transform_as=name,
+                                    force=transform_args.get('force', False), min_len=self.dataset_args.get('min_length'))
         else:
             dataset.import_data(min_len=self.dataset_args.get('min_length'))
         # flatten data in case
         if dataset_args.get('flatten') is not None:
             dataset.flatten_data(int(dataset_args['flatten']))
-        # import and scale transform
+        # set transforms
         current_transforms = parse_transforms(transform_args.get('transforms'))
         self.full_transforms = pre_transforms + current_transforms
-        if dataset_args.get('scale') is not None and current_transforms.needs_scaling:
-            try: 
-                scale = int(dataset_args.get('scale'))
-            except TypeError:
-                scale = bool(dataset_args.get('scale'))
-            dataset.scale_amount = scale
         dataset.transforms = current_transforms
         # import augmentations
         current_augmentations = parse_augmentations(augmentation_args)
@@ -89,7 +84,7 @@ class AudioDataModule(LightningDataModule):
                                    dataset_args['sequence'].get('mode', "random"))
         return dataset
 
-    def import_datasets(self, stage = None):
+    def import_datasets(self, stage=None):
         # transforms
         self.dataset = self.load_dataset(self.dataset_args, self.transform_args, self.augmentation_args, make_partitions=True)
         self.train_dataset = self.dataset.retrieve('train')
@@ -100,8 +95,9 @@ class AudioDataModule(LightningDataModule):
         return tuple(self.dataset[0][0].shape)
 
     # return the dataloader for each split
-    def train_dataloader(self, **kwargs):
+    def train_dataloader(self, batch_size=None, **kwargs):
         loader_args = {**self.loader_args, **kwargs}
+        loader_args['batch_size'] = batch_size or loader_args.get('batch_size', 128)
         loader_train = DataLoader(self.train_dataset, **loader_args)
         return loader_train
 

@@ -89,7 +89,7 @@ class VideoDataset(Dataset):
             valid_files = list(filter(lambda x: check_file(x, self.types), f))
             valid_files = [re.sub(f"{self.root_directory}/data/", "", f"{r}/{f}") for f in valid_files]
             files.extend(valid_files)
-        timestamps = {k: None for k in valid_files}
+        timestamps = {k: None for k in files}
         fps = {k: None for k in valid_files}
         for video_path in files:
             video_path_full = f"{self.root_directory}/data/{video_path}"

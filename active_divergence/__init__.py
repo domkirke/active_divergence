@@ -1,12 +1,11 @@
-import sys
-sys.path.append("../")
-
-from active_divergence import utils
-from active_divergence import data
-from active_divergence import losses
-from active_divergence import modules
-from active_divergence import models
-from active_divergence.monitor import plugins, callbacks
+import sys, os
+from omegaconf import OmegaConf
+from . import utils
+from . import data
+from . import losses
+from . import modules
+from . import models
+from .monitor import plugins, callbacks
 
 def get_callbacks(config):
     if config is None:
@@ -29,3 +28,24 @@ def get_plugins(config):
         plugin_args = plugin.get('args', {})
         pgs.append(getattr(plugins, plugin_type)(**plugin_args))
     return pgs
+
+
+# add resolvers
+_runtime_dir = os.getcwd()
+_home_dir = os.path.abspath("~")
+print(__file__)
+def get_directory(name):
+    if name == "runtime":
+        return _runtime_dir
+    elif name == "home":
+        return _home_dir
+    elif name == "current":
+        return os.getcwd()
+    elif name == "lib":
+        return os.path.abspath(os.path.dirname(__file__) + "/..")
+    else:
+        raise ValueError("interpolating dir with value %s not implemented"%name)
+
+OmegaConf.register_new_resolver("dir", lambda x: get_directory(x))
+OmegaConf.register_new_resolver("abs", lambda x: os.path.abspath(x))
+OmegaConf.register_new_resolver("base", lambda x: os.path.basename(x))

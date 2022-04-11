@@ -72,7 +72,7 @@ class Config(ConfigItem):
 
     def __init__(self, obj={}, **kwargs):
         """
-        Creates a config object from a yaml file, or dict
+        Creates a configs object from a yaml file, or dict
         Args:
             obj (str or dict): if str, loads corresponding YAML file. If dict, parses dict into a new Config object.
         """

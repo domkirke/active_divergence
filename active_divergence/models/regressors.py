@@ -1,6 +1,6 @@
 import numpy as np, torch, torch.nn as nn, torch.nn.functional as F, torch.distributions as dist, sys, pdb
 sys.path.append('../')
-from active_divergence.modules import oneshots
+#from active_divergence.modules import oneshots
 from active_divergence.utils import checklist, checkdir
 from omegaconf import OmegaConf
 from active_divergence.losses import distortion, regularization, priors
@@ -17,7 +17,7 @@ class Regressor(pl.LightningModule):
         config.regressor.args.input_dim = input_dim
         self.regressor = getattr(oneshots, config.regressor.type)(config.regressor.args)
         config.training = config.get('training') or training
-        # save config and hyperparameters
+        # save configs and hyperparameters
         self.config = config
         self.save_hyperparameters(dict(self.config))
 

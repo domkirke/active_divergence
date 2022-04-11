@@ -2,8 +2,9 @@ import os, sys, pdb
 sys.path.append('..')
 from torch.utils.data import random_split, DataLoader
 from torchvision.datasets import MNIST
-from torchvision import transforms
+from torchvision import transforms as tv
 from pytorch_lightning import LightningDataModule
+from active_divergence.data.img.transforms import Compose, Wrapper, Rescale, Binarize
 
 
 class MNISTDataModule(LightningDataModule):
@@ -33,17 +34,17 @@ class MNISTDataModule(LightningDataModule):
         # transforms
         transform = []
         if self.data_args.get('resize'):
-            transform.append(transforms.Resize(tuple(self.data_args.resize)))
-        transform.append(transforms.ToTensor())
+            transform.append(tv.Resize(tuple(self.data_args.resize)))
+        transform.append(tv.ToTensor())
         if self.data_args.binary:
-            transform.append(transforms.Lambda(lambda x: (x > 0.5).float()))
-        if self.polarity == "bipolar":
-            transform.append(transforms.Lambda(lambda x: x * 2 - 1))
-        transform = transforms.Compose(transform)
+            transform.append(Binarize())
+        transform.append(Rescale(mode = self.polarity))
+        transform = Compose(transform)
         # split dataset
         mnist_train = MNIST(os.getcwd(), train=True, transform=transform)
         self.mnist_train, self.mnist_val = random_split(mnist_train, [55000, 5000])
         self.mnist_test = MNIST(os.getcwd(), train=False, transform=transform)
+        self.transforms = transform
 
     # return the dataloader for each split
     def train_dataloader(self, **kwargs):

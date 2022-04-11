@@ -1,0 +1,51 @@
+name: ???
+rundir: "${dir:runtime}/saves/${name}"
+
+hydra:
+  job:
+    name: "${name}"
+  run:
+    dir: "${rundir}"
+  sweep:
+    dir: "${dir:runtime}/saves/${name}"
+    subdir: "${base:${data.dataset.root}}"
+
+defaults:
+  - data:
+    - defaults
+    - transforms/stft-1024
+  - model: vae
+  - callbacks: audio_defaults
+  - _self_
+
+data:
+  dataset:
+    transforms: [{type: Magnitude, args: {contrast: log, normalize: {mode: gaussian, scale: unipolar}}},
+                 {type: Unsqueeze, args: {dim: -3}}]
+# for learning single data spectral frames, the data can be whether flattened of randomly picked in each file. For the
+# second case, rather uncomment the sequence section.
+    flatten: -2
+   #sequence:
+   #  length: 1
+   #  mode: random
+   #  idx: -2
+
+  loader:
+    batch_size: 256
+    num_workers: 0
+
+# here we add specific parameters for the decoder's output (softplus + normal distribution).
+model:
+  latent:
+    dist: Normal
+    dim: 16
+  decoder:
+    args:
+      out_nnlin: Softplus
+      target_dist: Normal
+
+pl_trainer:
+  max_epochs: 1e5
+#  limit_train_batches: 1
+#  limit_val_batches: 1
+
