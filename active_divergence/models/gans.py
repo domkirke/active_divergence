@@ -731,7 +731,9 @@ class ModulatedGAN(ProgressiveGAN):
         if self.config.training.get('reg_period', True):
             if batch_idx % self.config.training.get('reg_period', 1) == 0:
                 if self.config.training.get('path_length') and g_loss.grad_fn is not None:
-                    path_length_penalty = self.path_length_penalty()
+                    n_batch = self.config.training.get('path_length_batches', 64)
+                    n_samples = self.config.training.get('path_length_samples', 3)
+                    path_length_penalty = self.path_length_penalty(n_batch=n_batch, n_samples=n_samples)
                     g_loss = g_loss + float(self.config.training.path_length) * path_length_penalty
                     if g_losses is not None:
                         g_losses['path_length'] = path_length_penalty.cpu().detach()

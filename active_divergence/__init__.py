@@ -29,7 +29,6 @@ def get_plugins(config):
         pgs.append(getattr(plugins, plugin_type)(**plugin_args))
     return pgs
 
-
 # add resolvers
 _runtime_dir = os.getcwd()
 _home_dir = os.path.abspath("~")

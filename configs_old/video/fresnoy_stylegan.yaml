@@ -15,6 +15,8 @@ data:
     #num_workers: 8
     shuffle: 1
 
+check: 1
+
 model:
   type: ModulatedGAN
   discriminator:
@@ -76,7 +78,7 @@ model:
     transition_schedule: [50, 50, 50, 50, 50, 50, 50, 50]
     save:
       path: &dir /slow-1/axel/active_divergence/video
-      name: &name style-gan
+      name: &name style-gan-destruction
 
 callbacks:
   [

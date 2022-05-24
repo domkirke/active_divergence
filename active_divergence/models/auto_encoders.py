@@ -131,6 +131,7 @@ class AutoEncoder(Model):
         trace_model = {'encoder': {}, 'decoder' : {}}
         if isinstance(x, (tuple, list)):
             x, y = x
+        x = x.to(self.device)
         z_params = self.encoder(x, trace = trace_model['encoder'])
         if sample:
             z = self.sample(z_params)

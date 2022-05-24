@@ -61,7 +61,8 @@ class ImgReconstructionMonitor(Callback):
             out = out.mean
         #out = out.transpose(0, 1)
         out = out.reshape(out.size(0) * out.size(1), *out.shape[2:])
-        out = datamodule.transforms.invert(out)
+        if hasattr(datamodule.transforms, "invert"):
+            out = datamodule.transforms.invert(out)
         full_img = tv.utils.make_grid(out, nrow=self.n_samples, value_range=[0, 1]) 
         return full_img
 
@@ -147,7 +148,7 @@ class AudioReconstructionMonitor(Callback):
         self.generate_after_n_epochs = generate_after_n_epochs or 0
 
     def plot_rec(self, model, loader):
-        data = next(loader(batch_size=self.n_reconstructions).__iter__())
+        data = next(loader(batch_size=self.n_reconstructions, num_workers=0).__iter__())
         x_original, x_out = model.reconstruct(data)
         x_original = x_original.squeeze()
         if len(x_original.shape) == 2:
@@ -179,10 +180,11 @@ class AudioReconstructionMonitor(Callback):
         fig, ax = plt.subplots(self.n_samples, len(self.temperature_range))
         for i in range(self.n_samples):
             for j in range(len(self.temperature_range)):
-                if len(out[i, j].shape) == 1:
-                    ax[i, j].plot(out[i, j].squeeze().cpu())
-                elif len(out[i, j].shape) == 2:
-                    ax[i, j].imshow(out[i, j].squeeze().cpu(), aspect="auto")
+                current_out = out[i, j].squeeze()
+                if len(current_out.shape) == 1:
+                    ax[i, j].plot(current_out.cpu())
+                elif len(current_out.shape) == 2:
+                    ax[i, j].imshow(current_out.cpu(), aspect="auto")
                 ax[i, j].set(xticklabels=[])
                 ax[i, j].set(yticklabels=[])
         return fig, out
@@ -252,6 +254,7 @@ class AudioReconstructionMonitor(Callback):
                             trainer.logger.experiment.add_audio('generation', raw_generation, global_step=trainer.current_epoch,
                                                                 sample_rate=dataset.sr)
 
+            print('prior sampling...')
             # plot prior sampling
             if hasattr(model, 'sample_from_prior') and epoch >= self.generate_after_n_epochs:
                 if self.plot_samples:
@@ -267,6 +270,7 @@ class AudioReconstructionMonitor(Callback):
                             samples_raw = samples_raw[0]
                         trainer.logger.experiment.add_audio('audio_samples', samples_raw, global_step=trainer.current_epoch, sample_rate=dataset.sr)
 
+            print('decode...')
             # generate trajectories
             if hasattr(model, 'decode'):
                 if self.generate_trajs and trainer.current_epoch % self.generate_trajs == 0 and epoch >= self.generate_after_n_epochs:

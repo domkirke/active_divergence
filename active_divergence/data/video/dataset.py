@@ -1,5 +1,6 @@
 import numpy as np, torch, torchvision as tv, os, dill, re, random, pdb, tqdm, lardon
 from torch.utils.data import Dataset
+from .transforms import VideoTransform
 from active_divergence.utils.misc import checklist, checknumpy, checkdir
 
 def check_file(file, types):
@@ -7,9 +8,10 @@ def check_file(file, types):
 
 class VideoDataset(Dataset):
     types = [".mp4", ".mov"]
-    def __init__(self, root_directory, transforms=None, augmentations=[], flatten=None, refresh=False, **kwargs):
+    def __init__(self, root_directory=None, transforms=None, augmentations=[], flatten=None, refresh=False, **kwargs):
+        assert root_directory is not None, "root_directory must be given"
         self.root_directory = root_directory
-        self.transforms = transforms
+        self.transforms = transforms or VideoDataset
         self.augmentations = augmentations
         self.data = None
         self.files = []
@@ -42,17 +44,15 @@ class VideoDataset(Dataset):
         timestamps = self.metadata['timestamps'][item]
         if sequence_mode is not None:
             if sequence_mode == "random":
-                try:
-                    start = random.randrange(0, len(timestamps) - sequence_length)
-                except:
-                    pdb.set_trace()
-                end = start + sequence_length
+                start_idx = random.randrange(0, len(timestamps) - sequence_length)
+                end_idx = start_idx + sequence_length
             elif sequence_mode == "start":
-                start = 0
-                end = sequence_length
-            start = timestamps[start]
-            end = timestamps[end]
+                start_idx = 0
+                end_idx = sequence_length
+            start = timestamps[start_idx]
+            end = timestamps[end_idx]
         else:
+            start_idx = 0; end_idx = len(timestamps)
             if hasattr(timestamps, "__iter__"):
                 start = timestamps[0]; end = timestamps[-1]
             else:
@@ -62,10 +62,15 @@ class VideoDataset(Dataset):
         if start == end:
             if data.shape[0] != 1:
                 data = data[0][np.newaxis]
+        if sequence_mode is not None:
+            if data.shape[0] > sequence_length:
+                data = data[:sequence_length]
+            elif data.shape[0] > sequence_length:
+                data = data
         data = data.permute(0, 3, 1, 2)
         if data.shape[0] == 1:
             data = data[0]
-        return data, (start, end)
+        return data, (start_idx, end_idx)
 
     def _get_metadata(self, item, seq=None):
         metadata = {}
@@ -125,19 +130,23 @@ class VideoDataset(Dataset):
         """
         checkdir(path)
         checkdir(f"{path}/data")
+        new_timestamps = {}
         for i, d in enumerate(tqdm.tqdm(self.files, desc="exporting transforms...", total=len(self.files))):
             new_data = self.transforms(self._get_item(i)[0])
             new_data = new_data.permute(0, 2, 3, 1)
             current_path = f"{path}/data/{self.files[i]}"
             checkdir(os.path.dirname(current_path))
             tv.io.write_video(current_path, new_data, fps = self.metadata['fps'][i])
+            new_timestamps[self.files[i]] = tv.io.read_video_timestamps(current_path)[0]
+        self.metadata['timestamps'] = [new_timestamps[self.files[i]] for i in range(len(self))]
         with open(f"{path}/transforms.ct", 'wb') as f:
             dill.dump(self.transforms, f)
         save_dict = self.get_attributes()
         with open(f"{path}/dataset.ct", "wb") as f:
             dill.dump(save_dict, f)
         with open(f"{path}/timestamps.ct", "wb") as f:
-            dill.dump({'timestamps': self.metadata['timestamps'], 'fps': self.metadata['fps']}, f)
+            fps = {self.files[i]: self.metadata['fps'][i] for i in range(len(self))}
+            dill.dump({'timestamps':new_timestamps, 'fps': fps}, f)
         self.transforms = None
         self.root_directory = path
 
@@ -212,7 +221,6 @@ class VideoDataset(Dataset):
                 partition_files[n] = [self.files[n] for n in permutation[cum_ids[i]:cum_ids[i+1]]]
         self.partitions = partitions
         self.partition_files = partition_files
-
 
     def retrieve(self, item):
         """

@@ -1,4 +1,5 @@
 *.pyc
+samples/
 */__pycache__/*
 *.pyo
 saves/*

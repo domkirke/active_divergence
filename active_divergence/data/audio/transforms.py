@@ -356,10 +356,11 @@ class MuLaw(AudioTransform):
 
 
 class Normalize(AudioTransform):
-    def __init__(self, mode="bipolar", max=None):
+    def __init__(self, mode="bipolar", scale=1.0):
         super(Normalize, self).__init__()
         self.mode = mode or "minmax"
         self.mean = None; self.max = None
+        self._scale = scale
 
     def __repr__(self):
         return f"Normalize(mode={self.mode}, scale={self.scale})"
@@ -398,6 +399,7 @@ class Normalize(AudioTransform):
         out = torch.true_divide(x - mean, max)
         if self.mode == "bipolar":
             out  = out * 2 - 1
+        out = out * self._scale
         # if self.polarity == "unipolar":
         #     out = out + eps
         return out
@@ -405,6 +407,7 @@ class Normalize(AudioTransform):
     def invert(self, x):
         if self.mean is None or self.max is None:
             raise NotInvertibleError()
+        x = x / self._scale
         if self.mode == "bipolar":
             x = (x + 1) / 2
         return x * self.max + self.mean
@@ -756,7 +759,6 @@ class DCT(AudioTransform):
 
 
 class MelSpectrogram(AudioTransform, ta_transforms.MelSpectrogram):
-    invertible = None
 
     def __init__(self, *args, sr=None, inversion_module=None, **kwargs):
         if kwargs.get('sample_rate') is not None:
@@ -1383,10 +1385,10 @@ class Magnitude(AudioTransform):
 class MelMagnitude(Magnitude):
     def __init__(self, normalize=None, contrast="log1p", shrink=4, global_norm=True, log_clamp=-8, n_mels=None, 
                  sample_rate=44100, nfft=2048, f_min = 0.0, f_max = None, mel_scale = "htk", norm=None, 
-                 keep_nyquist=True, **kwargs):
+                 keep_nyquist=True, max_iter=1000, **kwargs):
         super().__init__(normalize, contrast, shrink, global_norm, log_clamp, **kwargs)
-        self.nfft = nfft
-        self.n_mels = n_mels or self.nfft 
+        self.nfft = nfft // 2 + int(keep_nyquist)
+        self.n_mels = n_mels or self.nfft
         self.f_min = f_min or 0.0
         self.mel_scale = mel_scale or "htk"
         self.keep_nyquist = keep_nyquist
@@ -1395,7 +1397,7 @@ class MelMagnitude(Magnitude):
         self.norm = None if self.mel_scale == "htk" else norm
         self.fb = torchaudio.functional.melscale_fbanks(self.nfft, self.f_min, self.f_max, self.n_mels, self.sample_rate, self.norm, self.mel_scale)
         self.inverse_melscale = torchaudio.transforms.InverseMelScale(
-            self.nfft, n_mels=self.n_mels, sample_rate=self.sample_rate, f_min=self.f_min, f_max=self.f_max, norm=self.norm, mel_scale=self.mel_scale
+            self.nfft, max_iter=max_iter, n_mels=self.n_mels, sample_rate=self.sample_rate, f_min=self.f_min, f_max=self.f_max, norm=self.norm, mel_scale=self.mel_scale
         )
 
     def preprocess(self, x):
@@ -1403,9 +1405,9 @@ class MelMagnitude(Magnitude):
             x = torch.from_numpy(x)
         x = x.abs().to(torch.get_default_dtype())
         x_retain = x
-        x = torch.matmul(x, self.fb)
         if not self.keep_nyquist:
             x = x[..., 1:]
+        x = torch.matmul(x, self.fb)
         if self.constrast is None:
             return x
         elif self.constrast == "log":
@@ -1427,9 +1429,10 @@ class MelMagnitude(Magnitude):
             x = torch.expm1(x)*self.shrink
         else:
             raise ValueError('constrast %s not valid for Magnitude transform'%self.constrast)
-        if not self.keep_nyquist:
-            x = torch.cat([torch.zeros((*x.shape[:-1], 1), device=x.device, dtype=x.dtype), x], dim=-1)
-        x = self.inverse_melscale(x.float().transpose(-2, -1)).transpose(-2, -1)
+        with torch.enable_grad():
+            if not self.keep_nyquist:
+                x = torch.cat([torch.zeros((*x.shape[:-1], 1), device=x.device, dtype=x.dtype), x], dim=-1)
+            x = self.inverse_melscale(x.float().transpose(-2, -1)).transpose(-2, -1)
         if time is None:
             return x
         else:

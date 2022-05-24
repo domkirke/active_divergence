@@ -1,7 +1,6 @@
 import sys, pdb, random
 from tqdm import tqdm
-sys.path.append('../')
-sys.path.append('../../')
+sys.path.append('..')
 from active_divergence.data.audio.transforms import AudioTransform, NotInvertibleError
 from active_divergence.data.audio.augmentations import AudioAugmentation
 from active_divergence.data.audio import metadata as am
@@ -601,8 +600,11 @@ class AudioDataset(Dataset):
                     # transformed_data.append(selector(new_data)); transformed_time.append(selector(new_time))
             transformed_data = lardon.parse_folder(target_directory)
             transformed_meta = {k: [t[k] for t in transformed_meta] for k in transformed_meta[0].keys()}
+            self.data = transformed_data
+            self.metadata = {**self.metadata, **transformed_meta}
             with open(f"{target_directory}/transforms.ct", 'wb') as f:
                 dill.dump(self._transforms, f)
+            self._transforms = AudioTransform()
             save_dict = self.get_attributes(with_data=False)
             with open(f"{target_directory}/dataset.ct", "wb") as f:
                 dill.dump(save_dict, f)
@@ -614,9 +616,10 @@ class AudioDataset(Dataset):
                 transformed_data.append(new_data)
                 transformed_meta.append({'time': new_time, 'sr': self.metadata['sr'][i]})
             transformed_meta = {k: [t[k] for t in transformed_meta] for k in transformed_meta[0].keys()}
-        self._transforms = AudioTransform()
-        self.data = transformed_data
-        self.metadata = {**self.metadata, **transformed_meta}
+            self._transforms = AudioTransform()
+            self.data = transformed_data
+            self.metadata = {**self.metadata, **transformed_meta}
+
 
 
     def flatten_data(self, axis=0) -> None:

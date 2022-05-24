@@ -7,7 +7,7 @@ numpy
 nsgt
 pytest
 dill
-hydra
+hydra-core
 pytorch_lightning
 scikit_learn
 scipy

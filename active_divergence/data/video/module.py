@@ -2,7 +2,7 @@ import os, sys, pdb
 from typing import Type
 sys.path.append('..')
 import torch, torchvision as tv
-from active_divergence.data.video import VideoDataset, dataset
+from active_divergence.data.video import VideoDataset, VideoTransform, dataset
 from active_divergence.utils import Config, checklist
 from torch.utils.data import random_split, DataLoader
 from pytorch_lightning import LightningDataModule
@@ -44,7 +44,7 @@ def parse_augmentations(augmentation_list):
 class VideoDataLoader(DataLoader):
     def __iter__(self, *args, **kwargs):
         for x, y in super().__iter__():
-            x = x.squeeze(0)
+            x = x.reshape(x.shape[0]*x.shape[1], *x.shape[2:])
             yield x, y
 
 class VideoDataModule(LightningDataModule):
@@ -65,6 +65,7 @@ class VideoDataModule(LightningDataModule):
 
     def load_dataset(self, dataset_args, transform_args, augmentation_args, make_partitions=False):
         transforms = parse_transforms(transform_args.get('transforms'))
+        self.transforms = VideoTransform()
         self.full_transforms = transforms
         # import augmentations
         augmentations = parse_augmentations(augmentation_args)
@@ -91,6 +92,7 @@ class VideoDataModule(LightningDataModule):
             return tuple(self.dataset[0][0].shape[1:])
         else:
             return tuple(self.dataset[0][0].shape)
+
     # return the dataloader for each split
     def train_dataloader(self, **kwargs):
         loader_args = {**self.loader_args, **kwargs}

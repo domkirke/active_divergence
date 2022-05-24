@@ -522,10 +522,7 @@ class DeconvEncoder(nn.Module):
                                       **self.block_args[n])
             modules.append(current_layer)
         self.conv_modules = nn.ModuleList(modules)
-        out_channels = self.out_channels
-        if self.dist_module is not None:
-            if hasattr(self.dist_module, "required_channel_upsampling"):
-                out_channels *= self.dist_module.required_channel_upsampling
+
 
 
     def _init_unfold_modules(self):
@@ -590,19 +587,24 @@ class DeconvEncoder(nn.Module):
             self.input_size = input_shape
 
     def _init_final_convs(self):
+        out_channels = self.out_channels
+        if self.dist_module is not None:
+            if hasattr(self.dist_module, "required_channel_upsampling"):
+                out_channels *= self.dist_module.required_channel_upsampling
+
         if self.mode in ["forward"]:
             if len(self.kernel_size) == len(self.channels):
-                self.final_conv = layers.conv_hash['conv'][self.dim](self.channels[-1], self.out_channels,
+                self.final_conv = layers.conv_hash['conv'][self.dim](self.channels[-1], out_channels,
                                                                      self.kernel_size[-1],
                                                                      padding=int(np.floor(self.kernel_size[-1] / 2)))
             else:
-                self.final_conv = layers.conv_hash['conv'][self.dim](self.channels[-1], self.out_channels, 1)
+                self.final_conv = layers.conv_hash['conv'][self.dim](self.channels[-1], out_channels, 1)
         else:
             final_convs = []
             if self.has_flatten and self.index_flatten:
-                final_convs.append(layers.conv_hash['conv'][self.dim](self.channels[0], self.out_channels, 1))
+                final_convs.append(layers.conv_hash['conv'][self.dim](self.channels[0], out_channels, 1))
             for n in range(1, len(self.channels)):
-                final_convs.append(layers.conv_hash['conv'][self.dim](self.channels[n], self.out_channels, 1))
+                final_convs.append(layers.conv_hash['conv'][self.dim](self.channels[n], out_channels, 1))
             self.final_conv = nn.ModuleList(final_convs)
 
     def forward(self, x: torch.Tensor, mod=None, use_final_conv=True, transition=None, trace=None, **kwargs) -> Union[
@@ -616,6 +618,7 @@ class DeconvEncoder(nn.Module):
         Returns:
             out (torch.Tensor): decoded output
         """
+        #TODO make this stronger
         dim = len(checktuple(self.input_size)) or (self.dim + 1) or len(x.shape) - 1
         batch_shape = x.shape[:-dim]
         # process flattening
@@ -681,9 +684,13 @@ class DeconvEncoder(nn.Module):
             for i, h in enumerate(hidden):
                 trace['layer_%d'%i] = h
 
+        #TODO make this stronger
+        event_shape = len(self.target_shape) or self.dim+1 or len(out.shape) - len(batch_shape)
+        out = out.reshape(*batch_shape, *out.shape[-event_shape:])
         if hasattr(self, "dist_module"):
             if self.dist_module is not None:
                 out = self.dist_module(out)
+
         return out
 
     def get_submodule(self, items: Union[int, List[int], range]) -> nn.Module:

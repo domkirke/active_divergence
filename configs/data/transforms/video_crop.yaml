@@ -1,4 +1,4 @@
 transforms:
-  - {type: CenterCrop, args:[[512,512]], kwargs: {}}
+  - {type: CenterCrop, args:[[1024, 1024]], kwargs: {}}
   - {type: Normalize, args: [0., 1.]}
   - {type: Dequantize, kwargs: {range: [0, 255]}}
