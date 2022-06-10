@@ -1,10 +1,10 @@
 import sys, pdb, random
 from tqdm import tqdm
 sys.path.append('..')
-from active_divergence.data.audio.transforms import AudioTransform, NotInvertibleError
+from acids_transforms.transforms import AudioTransform, NotInvertibleError
 from active_divergence.data.audio.augmentations import AudioAugmentation
 from active_divergence.data.audio import metadata as am
-from active_divergence.utils import checklist, checktensor, checknumpy, ContinuousList
+from active_divergence.utils import *
 import torch, torchaudio, os, dill, re, numpy as np, matplotlib.pyplot as plt, random, copy, lardon, numbers, math
 from tqdm import tqdm
 from torch.utils.data import Dataset, BatchSampler
@@ -96,8 +96,10 @@ class AudioDataset(Dataset):
     def _settransform(self, transforms):
         assert isinstance(transforms, AudioTransform)
         self._transforms = transforms
-        if self._transforms.needs_scaling and len(self.data) > 0:
+        if transforms.needs_scaling and len(self.data) > 0:
             self.scale_transform(self.scale_amount)
+        if transforms.scriptable:
+            transforms = torch.jit.script(transforms)
     def _gettransform(self):
         return self._transforms
     def _deltransform(self):
@@ -121,7 +123,7 @@ class AudioDataset(Dataset):
     augmentations = property(_getaugmentation, _setaugmentation, _delaugmentation)
 
 
-    def __init__(self, config: OmegaConf = None, root: str=None, sr: int=None, bitrate:int=16, dtype: torch.dtype=None,
+    def __init__(self, config: OmegaConf = None, root: str=None, sr: int=44100, bitrate:int=16, dtype: torch.dtype=None,
                  target_length: Union[float, int]=None, transforms: AudioTransform = AudioTransform(),
                  augmentations: AudioAugmentation=[], target_transforms = None,
                  sequence: Union[OmegaConf, dict] = None, scale_amount=10):
@@ -151,6 +153,7 @@ class AudioDataset(Dataset):
         self.metadata = {}
         self.classes = {}
         self.sr = config.get('sr') or sr or 44100
+        assert sr is not None
         self.bitrate = config.get('bitrate') or bitrate or 16
         self.dtype = getdtype(config.get('dtype')) or dtype or torch.get_default_dtype()
         self.partitions = {}
@@ -208,7 +211,7 @@ class AudioDataset(Dataset):
         metadata = self._get_item_metadata(item, seq=seq_idx)
         # transform data
         if self._transforms is not None:
-            data = self._transforms(data, time=metadata.get('time'))
+            data = self._transforms.forward_with_time(data, time=metadata.get('time'))
             if metadata.get('time') is not None:
                 data, time = data
         # augment data
@@ -494,7 +497,7 @@ class AudioDataset(Dataset):
             assert save_transform_as is not None, "if write_transforms is True, save_transform_as must be given a string"
             self.write_transforms(save_as=save_transform_as, force=force)
 
-    def scale_transform(self, scale: Union[int, bool]) -> None:
+    def scale_transform(self, scale: Union[int, bool], mode: str = "pad") -> None:
         """
         Scales current transform on a given amount of data.
         Args:
@@ -505,8 +508,11 @@ class AudioDataset(Dataset):
                 self._transforms.scale(self.data[:])
             elif isinstance(scale, int):
                 idx = torch.randperm(len(self.data))[:scale]
-                scale_data = [self.data[i.item()] for i in idx]
-                self._transforms.scale(scale_data)
+                if mode == "pad":
+                    scale_data = pad_data([checktensor(self.data[i.item()]) for i in idx])
+                elif mode == "crop":
+                    scale_data = crop_data([checktensor(self.data[i.item()]) for i in idx])
+                self._transforms.scale_data(scale_data)
 
     def import_transform(self, transform: str, n_files: int = None) -> AudioTransform:
         """
@@ -591,7 +597,7 @@ class AudioDataset(Dataset):
             with lardon.LardonParser(self.root_directory+'/data', target_directory, force=force) as parser:
                 for i, d in enumerate(tqdm(self.data, desc="exporting transforms...", total=len(self.data))):
                     time = torch.tensor([0.]) if not "time" in self.metadata['time'] else self.metadata['time'][i]
-                    new_data, new_time = self._transforms(d, time=time, sr=self.metadata['sr'][i])
+                    new_data, new_time = self._transforms.forward_with_time(d, time=time)
                     new_data = checknumpy(new_data)
                     transformed_meta.append({'time':new_time.numpy(), 'sr':self.metadata['sr'][i]})
                     if save_as is not None:
@@ -631,6 +637,7 @@ class AudioDataset(Dataset):
         """
         data = []
         metadata = {k: [] for k in self.metadata.keys()}
+        metadata['time'] = []
         files = []
         hash = {}
         running_id = 0
@@ -640,9 +647,13 @@ class AudioDataset(Dataset):
             else:
                 current_data = self.data[i].split(1, dim=axis)
             data.extend(current_data)
+            meta_axis = len(self.data.shape) + axis - 1
             if self.metadata.get('time'):
                 time = self.metadata['time'][i]
-                metadata['time'].extend(np.zeros_like(time))
+                if meta_axis == 0:
+                    metadata['time'].append(time)
+                else:
+                    metadata['time'].append(np.transpose(time, (meta_axis, 0)))
             for k in self.metadata.keys():
                 if k == "time":
                     continue
@@ -667,7 +678,7 @@ class AudioDataset(Dataset):
             self.data = data
         self.metadata = metadata
         if self.metadata.get('time'):
-            self.metadata['time'] = np.array(self.metadata['time'])[:, np.newaxis]
+            self.metadata['time'] = np.concatenate(metadata['time'], 0)
         self.hash = hash
         self.files = files
         self._sequence_dim = None
@@ -759,10 +770,10 @@ class AudioDataset(Dataset):
         """
         data, meta = parse_audio_file(file, self.sr, len=self.target_length, bitrate=self.bitrate)
         if self._pre_transform is not None:
-            data, meta['time'] = self._pre_transform(data, time=meta['time'])
+            data, meta['time'] = self._pre_transform.forward_with_time(data, time=meta['time'])
         if self._flattened is not None:
             data = torch.stack([d.squeeze(self._flattened) for d in data.split(1, self._flattened)])
-        data, meta['time'] = self._transforms(data, time=meta['time'])
+        data, meta['time'] = self._transforms.forward_with_time(data, time=meta['time'])
         if self.dtype is not None:
             data = data.to(self.dtype)
         return data, meta

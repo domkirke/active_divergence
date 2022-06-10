@@ -7,13 +7,11 @@ N_FILES_INVERSION = 2
 INVERSION_IDS = [0]
 OUTDIR = "/tmp"
 
-
 @pytest.mark.data
 def test_raw_import(dataset_path):
     dataset = ad.data.audio.AudioDataset(dataset_path)
     dataset = ad.data.audio.AudioDataset(dataset_path, TARGET_LENGTH=1.0)
     dataset = ad.data.audio.AudioDataset(dataset_path, TARGET_LENGTH=4096)
-
 
 @pytest.fixture(name="raw_dataset", scope="session")
 def raw_dataset(dataset_path):

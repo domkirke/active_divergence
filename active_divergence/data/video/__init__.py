@@ -1,3 +1,3 @@
 from .dataset import VideoDataset
-from .transforms import *
+from .transforms import VideoTransform
 from .module import VideoDataModule

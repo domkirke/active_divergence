@@ -7,8 +7,7 @@ from active_divergence.modules import encoders
 from active_divergence.utils import checklist, checkdir, trace_distribution
 from omegaconf import OmegaConf, ListConfig
 from active_divergence.losses import get_regularization_loss, get_distortion_loss, priors
-from typing import Dict, Union, Tuple
-
+from typing import Dict, Union, Tuple, Callable
 
 class AutoEncoder(Model):
     def __init__(self, config: OmegaConf=None, **kwargs):
@@ -85,6 +84,16 @@ class AutoEncoder(Model):
         else:
             return optimizer
 
+    def get_beta(self):
+        beta = self.config.training.beta if self.config.training.beta is not None else 1.0
+        if self.config.training.warmup:
+            beta_schedule_type = self.config.training.get('beta_schedule_type', "epoch")
+            if beta_schedule_type == "epoch":
+                beta = min(int(self.trainer.current_epoch) / self.config.training.warmup, beta)
+            elif beta_schedule_type == "batch":
+                beta = min(int(self.trainer.global_step) / self.config.training.warmup, beta)
+        return beta
+
     # External methods
     def forward(self, x: torch.Tensor, *args, **kwargs) -> torch.Tensor:
         # in lightning, forward defines the prediction/inference actions
@@ -115,6 +124,7 @@ class AutoEncoder(Model):
         elif mode == "latent":
             return self.decode(z)
 
+    @torch.jit.export
     def full_forward(self, x: torch.Tensor, batch_idx: int=None,  sample: bool=True) -> Dict:
         """encodes and decodes an incoming tensor."""
         if isinstance(x, (tuple, list)):
@@ -146,7 +156,6 @@ class AutoEncoder(Model):
                                **trace_model}
         return trace
 
-
     def loss(self, batch, x, z_params, z, drop_detail = False, **kwargs):
         rec_loss = self.reconstruction_loss(x, batch, drop_detail=drop_detail)
         prior = self.prior(z.shape, device=batch.device)
@@ -154,9 +163,7 @@ class AutoEncoder(Model):
         if drop_detail:
             rec_loss, rec_losses = rec_loss
             reg_loss, reg_losses = reg_loss
-        beta = self.config.training.get('beta', 1.0)
-        if self.config.training.get('warmup') and (kwargs.get('epoch') is not None):
-            beta = min(int(kwargs.get('epoch')) / self.config.training.warmup, beta)
+        beta = self.get_beta()
         loss = rec_loss + beta * reg_loss
         if drop_detail:
             return loss, {"full_loss": loss.cpu().detach(), **reg_losses, **rec_losses}
@@ -168,6 +175,7 @@ class AutoEncoder(Model):
         # training_step defined the train loop.
         x, z_params, z = self.full_forward(batch, batch_idx)
         loss, losses = self.loss(batch, x, z_params, z, epoch=self.trainer.current_epoch, drop_detail=True)
+        losses['beta'] = self.get_beta()
         self.log_losses(losses, "train", prog_bar=True)
         return loss
 
@@ -201,6 +209,31 @@ class AutoEncoder(Model):
                 x = x.mean
             generations.append(x)
         return torch.stack(generations, 1)
+
+    def get_scripted(self, transform: Union[Callable, None] = None):
+        return torch.jit.script(ScriptableAutoEncoder(self, transform))
+
+class ScriptableAutoEncoder(nn.Module):
+    def __init__(self, auto_encoder: AutoEncoder, transform: Union[Callable, None] = None):
+        super().__init__()
+        self.encoder = auto_encoder.encoder
+        self.decoder = auto_encoder.decoder
+        self.transform = transform
+        self.sample = self.sample_gaussian
+
+    def sample_gaussian(self, dist) -> torch.Tensor:
+        return dist.mean
+
+    @torch.jit.export
+    def forward(self, x: torch.Tensor):
+        if self.transform is not None:
+            x = self.transform(x)
+        z = self.sample(self.encoder(x))
+        x_rec = self.decoder(z).mean
+        if self.transform is not None:
+            x_rec = self.transform.invert(x_rec)
+        return x_rec
+        
 
 
 class InfoGAN(GAN):
@@ -269,6 +302,7 @@ class InfoGAN(GAN):
                 valid_names = list(filter(lambda x: re.match(param_regex, full_params_names_prefix[x]), range(len(full_params_names))))
                 params.extend([full_params[full_params_names[i]] for i in valid_names])
         return params
+
 
     def configure_optimizers(self):
         gen_p = self.get_parameters(self.config.get('optim_params'), self.encoder, "encoder")

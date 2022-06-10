@@ -4,6 +4,7 @@ import torch, pytorch_lightning as pl, hydra
 from omegaconf import OmegaConf, DictConfig
 import GPUtil as gpu
 from active_divergence import data, models, get_callbacks
+from active_divergence.utils import save_trainig_config
 logger = logging.getLogger(__name__)
 
 # detect CUDA devices
@@ -39,6 +40,7 @@ def main(config: DictConfig):
     if bool(config.get('check')):
         pdb.set_trace()
     # train!
+    save_trainig_config(config, data_module)
     trainer.fit(model, datamodule=data_module)
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 module: AudioDataModule
-root: "${dir:lib}/tests/acidsInstruments-test"
+root: ???
 metadata_callbacks:
   pitch:
     name: read_single_metadata

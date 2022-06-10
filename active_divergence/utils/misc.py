@@ -216,6 +216,32 @@ def fint(x, order=1):
             out[i-2] = out[i] - 4 * x[i-1]
     return out
 
+def crop_data(tensor_list):
+    assert len(tensor_list) != 0
+    assert [tensor_list[0].ndim == tensor_list[i].ndim for i in range(len(tensor_list))]
+    target_shape = []
+    for i in range(tensor_list[0].ndim):
+        target_shape.append(min([tensor_list[j].shape[i] for j in range(len(tensor_list))]))
+    cropped_list = []
+    for i in range(len(tensor_list)):
+        cropped_list.append(tensor_list[i].as_strided(target_shape, tensor_list[i].stride()))
+    return torch.stack(cropped_list)
+
+def pad_data(tensor_list):
+    assert len(tensor_list) != 0
+    assert [tensor_list[0].ndim == tensor_list[i].ndim for i in range(len(tensor_list))]
+    target_shape = []
+    for i in range(tensor_list[0].ndim):
+        target_shape.append(max([tensor_list[j].shape[i] for j in range(len(tensor_list))]))
+    padded_list = []
+    for i in range(len(tensor_list)):
+        pad_length = []
+        for j in range(len(target_shape)-1,-1,-1):
+            pad_length.extend([0, target_shape[j] - tensor_list[i].shape[j]])
+        padded_list.append(torch.nn.functional.pad(tensor_list[i], pad_length))
+    return torch.stack(padded_list)
+    
+
 
 class ContinuousSlice(object):
     def __init__(self, *args):

@@ -2,7 +2,8 @@ import os, sys, pdb
 from typing import Type
 sys.path.append('..')
 from active_divergence.data.audio import AudioDataset
-from active_divergence.data.audio import transforms, augmentations
+from active_divergence.data.audio import augmentations
+from acids_transforms import transforms
 from active_divergence.utils import Config, checklist
 from torch.utils.data import random_split, DataLoader
 from torchvision.datasets import MNIST

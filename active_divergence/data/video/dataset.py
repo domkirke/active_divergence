@@ -1,7 +1,6 @@
-import numpy as np, torch, torchvision as tv, os, dill, re, random, pdb, tqdm, lardon
+import numpy as np, torch, torchvision as tv, os, dill, re, random, tqdm, lardon
 from torch.utils.data import Dataset
-from .transforms import VideoTransform
-from active_divergence.utils.misc import checklist, checknumpy, checkdir
+from active_divergence.utils.misc import checklist, checkdir
 
 def check_file(file, types):
     return os.path.splitext(file)[1] in types and os.path.basename(file[0]) != "."
