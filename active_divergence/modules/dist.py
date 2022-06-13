@@ -37,7 +37,7 @@ class ConvBernoulli(MLPBernoulli):
 class MLPNormal(nn.Module):
     variance_modes = ['none', 'logvar', 'sigm3', 'sig']
     eps = 1e-6
-    def __init__(self, out_nnlin=None, dim=None, varmode="sigm3"):
+    def __init__(self, out_nnlin=None, dim=None, varmode="sig"):
         """
         embeds the output of an MLP as a Normal distribution. Splits the last dimension in 2 to obtain mu and variance.
         Args:
@@ -68,7 +68,7 @@ class MLPNormal(nn.Module):
         elif self.varmode == "sig":
             std = torch.sigmoid(std)
         elif self.varmode == "sigm3":
-            std = torch.sigmoid(std-3) + 1e-6
+            std = torch.sigmoid(std-1) + 1e-5
         return dist.Normal(mu, std)
 
 
