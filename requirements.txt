@@ -5,6 +5,7 @@ omegaconf
 matplotlib
 numpy
 nsgt
+pylint
 pytest
 dill
 hydra-core
