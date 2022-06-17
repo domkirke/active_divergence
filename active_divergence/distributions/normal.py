@@ -1,4 +1,4 @@
-import torch, torch.nn as nn
+import torch, torch.nn as nn, math
 from .base import Distribution
 
 
@@ -41,4 +41,4 @@ class Normal(Distribution):
     def log_prob(self, value):
         var = (self.scale ** 2)
         log_scale = self.scale.log()
-        return -((value - self.loc) ** 2) / (2 * var) - log_scale - torch.log(torch.sqrt(2 * torch.pi))
+        return -((value - self.loc) ** 2) / (2 * var) - log_scale - math.log(math.sqrt(2 * torch.pi))

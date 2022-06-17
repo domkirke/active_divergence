@@ -1,8 +1,10 @@
+from lib2to3.pytree import convert
 import sys
 sys.path.append('../')
 import torch, torch.nn as nn
 from active_divergence.losses.loss import Loss
-from torch.distributions import Distribution, kl_divergence
+from active_divergence.distributions import Distribution, convert_to_torch
+from torch.distributions import kl_divergence
 from typing import Callable, Union
 
 class KLD(Loss):
@@ -23,6 +25,8 @@ class KLD(Loss):
         reduction = kwargs.get('reduction', self.reduction)
         assert isinstance(params1, Distribution) and isinstance(params2, Distribution), \
             "KLD only works with two distributions"
+        params1 = convert_to_torch(params1)
+        params2 = convert_to_torch(params2)
         ld = self.reduce(kl_divergence(params1, params2), reduction=reduction)
         if drop_detail:
             return ld, {'kld': ld}

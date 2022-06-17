@@ -1,7 +1,6 @@
 import torch, torch.nn as nn
 from typing import Union
 from torch.nn.functional import binary_cross_entropy_with_logits, softmax
-from torch.distributions.utils import probs_to_logits, logits_to_probs
 from .base import Distribution
 
 __all__ = ["Categorical"]
@@ -11,12 +10,11 @@ def logits_to_probs(logits, is_binary: bool=False):
         return torch.sigmoid(logits)
     return softmax(logits, dim=-1)
 
-def probs_to_logits(probs, is_binary: bool=False, eps: float=1.e-6):
+def probs_to_logits(probs, is_binary: bool=False, eps: float=1.e-7):
     ps_clamped = probs.clamp(min=eps, max=1 - eps)
     if is_binary:
         return torch.log(ps_clamped) - torch.log1p(-ps_clamped)
     return torch.log(ps_clamped)
-
 
 class Categorical(Distribution):
     def __init__(self,
@@ -36,7 +34,7 @@ class Categorical(Distribution):
         elif (logits is None):
             assert not (probs is None)
             self.probs = probs / probs.sum(-1, keepdim=True)
-            self.logits = probs_to_logits(probs, False, 1.e-7)
+            self.logits = probs_to_logits(self.probs, False)#, 1.e-7)
             self._param = probs
             assert not (probs < 0.).any(), "found probs < 0."
             assert not (probs > 1.).any(), "found probs > 1."
@@ -73,7 +71,7 @@ class Categorical(Distribution):
 
     @property
     def _natural_params(self):
-        return (torch.log(self.probs / (1 - self.probs)), )
+        return (torch.log(self.probs / (1 - self.probs)),)
 
     def entropy(self):
         min_real = 1e-7

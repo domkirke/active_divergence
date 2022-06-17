@@ -1,7 +1,7 @@
 from torch import sqrt, tensor
 from torch.nn.init import calculate_gain as cg
 import torch, torch.nn as nn
-from typing import Iterable
+from typing import List, Union
 
 def calculate_gain(nnlin, param=None):
     try:
@@ -25,16 +25,16 @@ class Reshape(nn.Module):
             *args: target shape
         """
         super(Reshape, self).__init__()
-        self.target_shape = tuple([int(a) for a in args])
+        self.target_shape = torch.Size([int(a) for a in args])
         self.incoming_dim = incoming_dim
 
-    def forward(self, x: torch.Tensor, batch_shape: Iterable[int] = None, **kwargs) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, batch_shape: Union[None, List[int]] = None) -> torch.Tensor:
         if batch_shape is None:
             if self.incoming_dim:
-                batch_shape = x.shape[:-self.incoming_dim]
+                batch_shape = torch.Size(x.shape[:-self.incoming_dim])
             else:
-                batch_shape = x.shape[:-len(self.target_shape)]
-        return torch.reshape(x, (*batch_shape, *self.target_shape))
+                batch_shape = torch.Size(x.shape[:-len(self.target_shape)])
+        return torch.reshape(x, batch_shape + self.target_shape)
 
 class Unsqueeze(nn.Module):
     def __init__(self, dim: int):
@@ -46,7 +46,7 @@ class Unsqueeze(nn.Module):
         super(Unsqueeze, self).__init__()
         self.dim = dim
 
-    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return torch.unsqueeze(x, self.dim)
 
 from .activations import *

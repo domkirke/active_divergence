@@ -1,9 +1,10 @@
 from active_divergence.utils.config import ConfigItem
-import numpy as np, torch, torch.nn as nn, torch.nn.functional as F, torch.distributions as dist, sys, pdb, re
+import numpy as np, torch, torch.nn as nn, torch.nn.functional as F, sys, pdb, re
 sys.path.append('../')
 from active_divergence.models.model import Model, ConfigType
 from active_divergence.models.gans import GAN, parse_additional_losses
 from active_divergence.modules import encoders
+from active_divergence import distributions as dist
 from active_divergence.utils import checklist, checkdir, trace_distribution
 from omegaconf import OmegaConf, ListConfig
 from active_divergence.losses import get_regularization_loss, get_distortion_loss, priors
@@ -30,7 +31,7 @@ class AutoEncoder(Model):
         super().__init__(config=config)
 
         # input config
-        self.input_size = config.get('input_size') or kwargs.get('input_size')
+        self.input_shape = config.get('input_shape') or kwargs.get('input_shape')
         # latent configs
         config.latent = config.get('latent')
         self.latent = config.latent
@@ -38,8 +39,8 @@ class AutoEncoder(Model):
         # encoder architecture
         config.encoder = config.get('encoder')
         config.encoder.args = config.encoder.get('args', {})
-        if config.encoder['args'].get('input_size') is None:
-            config.encoder['args']['input_size'] = self.input_size
+        if config.encoder['args'].get('input_shape') is None:
+            config.encoder['args']['input_shape'] = self.input_shape
         if config.encoder['args'].get('target_shape') is None:
             config.encoder['args']['target_shape'] = config.latent.dim
         config.encoder['args']['target_dist'] = config.latent.dist
@@ -49,11 +50,11 @@ class AutoEncoder(Model):
         # decoder architecture
         config.decoder = config.get('decoder')
         config.decoder.args = config.decoder.get('args', {})
-        config.decoder.args.input_size = config.latent.dim
-        if config.decoder.args.get('input_size') is None:
-            config.decoder.args.input_size = config.latent.dim
+        config.decoder.args.input_shape = config.latent.dim
+        if config.decoder.args.get('input_shape') is None:
+            config.decoder.args.input_shape = config.latent.dim
         if config.decoder.args.get('target_shape') is None:
-            config.decoder.args.target_shape = self.input_size
+            config.decoder.args.target_shape = self.input_shape
         decoder_type = config.decoder.type or "MLPDecoder"
         self.decoder = getattr(encoders, decoder_type)(config.decoder.args)
 
@@ -105,10 +106,7 @@ class AutoEncoder(Model):
     def sample(self, z_params: Union[dist.Distribution, torch.Tensor]) -> torch.Tensor:
         """Samples a latent distribution."""
         if isinstance(z_params, dist.Distribution):
-            if z_params.has_rsample:
-                z = z_params.rsample()
-            else:
-                z = z_params.sample()
+            z = z_params.rsample()
         else:
             z = z_params
         return z
@@ -219,17 +217,17 @@ class ScriptableAutoEncoder(nn.Module):
         self.encoder = auto_encoder.encoder
         self.decoder = auto_encoder.decoder
         self.transform = transform
-        self.sample = self.sample_gaussian
-
-    def sample_gaussian(self, dist) -> torch.Tensor:
-        return dist.mean
 
     @torch.jit.export
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor, sample: bool = False):
         if self.transform is not None:
             x = self.transform(x)
-        z = self.sample(self.encoder(x))
-        x_rec = self.decoder(z).mean
+        z = self.encoder(x)
+        if sample:
+            decoder_input = z.sample()
+        else:
+            decoder_input = z.mean
+        x_rec = self.decoder(decoder_input).mean
         if self.transform is not None:
             x_rec = self.transform.invert(x_rec)
         return x_rec
@@ -244,7 +242,7 @@ class InfoGAN(GAN):
         else:
             config = OmegaConf.create()
 
-        input_size = config.get('input_size') or kwargs.get('input_size')
+        input_shape = config.get('input_shape') or kwargs.get('input_shape')
         # setup latent
         config.latent = config.get('latent') or latent or {}
         self.prior = getattr(priors, config.latent.get('prior', "isotropic_gaussian"))
@@ -254,8 +252,8 @@ class InfoGAN(GAN):
         # encoder architecture
         config.encoder = config.get('encoder') or encoder
         config.encoder.args = config.encoder.get('args', {})
-        if config.encoder['args'].get('input_size') is None:
-            config.encoder['args']['input_size'] = config.get('input_size') or kwargs.get('input_size')
+        if config.encoder['args'].get('input_shape') is None:
+            config.encoder['args']['input_shape'] = config.get('input_shape') or kwargs.get('input_shape')
         if config.encoder['args'].get('target_shape') is None:
             config.encoder['args']['target_shape'] = config.latent.dim
         config.encoder['args']['target_dist'] = config.latent.dist
@@ -264,16 +262,16 @@ class InfoGAN(GAN):
         # decoder architecture
         config.decoder = config.get('decoder', decoder)
         config.decoder.args = config.decoder.get('args', {})
-        config.decoder.args.input_size = config.latent.dim
-        if config.decoder.args.get('input_size') is None:
-            config.decoder.args.input_size = config.latent.dim
+        config.decoder.args.input_shape = config.latent.dim
+        if config.decoder.args.get('input_shape') is None:
+            config.decoder.args.input_shape = config.latent.dim
         if config.decoder.args.get('target_shape') is None:
-            config.decoder.args.target_shape = config.get('input_size') or kwargs.get('input_size')
+            config.decoder.args.target_shape = config.get('input_shape') or kwargs.get('input_shape')
         decoder_type = config.decoder.type or "MLPDecoder"
         self.decoder = getattr(encoders, decoder_type)(config.decoder.args) 
         # setup discriminator
         config.discriminator = config.get('discriminator') or discriminator 
-        config.discriminator.args.input_size = input_size
+        config.discriminator.args.input_shape = input_shape
         self.init_discriminator(config.discriminator)
         # setup training
         config.training = config.get('training') or training

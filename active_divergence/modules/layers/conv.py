@@ -1,15 +1,3 @@
-import sys, pdb
-sys.path.append('../')
-import torch, torch.nn as nn
-from torch import Tensor, ones
-from torch.nn import Conv1d, Conv2d, Conv3d, ConvTranspose1d, ConvTranspose2d, ConvTranspose3d
-import numpy as np
-from active_divergence.utils import checklist, checktuple
-from . import dropout_hash, norm_hash, DEFAULT_NNLIN
-from typing import Union, Tuple, List, Iterable, Callable, NoReturn, Optional
-
-
-
 #%% Convolutional ops
 #_________________
 ### Weighted convs
@@ -23,6 +11,13 @@ from active_divergence.utils import checklist, checktuple
 from . import dropout_hash, norm_hash, DEFAULT_NNLIN
 from typing import Union, Tuple, List, Iterable, Callable, NoReturn, Optional
 
+
+def check_conv_param(param, dim=1):
+    if isinstance(param, np.ndarray):
+        return tuple([int(t) for t in param])
+    else:
+        return tuple([int(t) for t in checklist(param, n=dim)])
+
 ### weighted convolutions
 ### Convolution Modules
 
@@ -30,6 +25,10 @@ class Conv1d(nn.Conv1d):
     def __init__(self, *args, equalized_lr=False, **kwargs):
         super(Conv1d, self).__init__(*args, **kwargs)
         self.equalized_lr = equalized_lr
+
+    @torch.jit.export
+    def __call__(self, input: Tensor) -> Tensor:
+        return self.forward(input)
 
     def forward(self, input: Tensor) -> Tensor:
         weight = self.weight
@@ -43,6 +42,10 @@ class Conv2d(nn.Conv2d):
         super(Conv2d, self).__init__(*args, **kwargs)
         self.equalized_lr = equalized_lr
 
+    @torch.jit.export
+    def __call__(self, input: Tensor) -> Tensor:
+        return self.forward(input)
+
     def forward(self, input: Tensor) -> Tensor:
         weight = self.weight
         if self.training and self.equalized_lr:
@@ -54,6 +57,10 @@ class Conv3d(nn.Conv3d):
     def __init__(self, *args, equalized_lr=False, **kwargs):
         super(Conv3d, self).__init__(*args, **kwargs)
         self.equalized_lr = equalized_lr
+
+    @torch.jit.export
+    def __call__(self, input: Tensor) -> Tensor:
+        return self.forward(input)
 
     def forward(self, input: Tensor) -> Tensor:
         weight = self.weight
@@ -95,7 +102,7 @@ class ConvTranspose2d(nn.ConvTranspose2d):
         weight = self.weight
         if self.training and self.equalized_lr:
             weight = weight * math.sqrt(2 / torch.numel(weight))
-        return nn.functional.conv_transpose1d(
+        return nn.functional.conv_transpose2d(
             input, weight, self.bias, self.stride, self.padding,
             output_padding, self.groups, self.dilation)
 
@@ -114,7 +121,7 @@ class ConvTranspose3d(nn.ConvTranspose3d):
         weight = self.weight
         if self.training and self.equalized_lr:
             weight = weight * math.sqrt(2 / torch.numel(weight))
-        return nn.functional.conv_transpose1d(
+        return nn.functional.conv_transpose3d(
             input, weight, self.bias, self.stride, self.padding,
             output_padding, self.groups, self.dilation)
 
@@ -356,13 +363,12 @@ class ConvLayer(nn.Module):
         """
         super(ConvLayer, self).__init__()
         self.channels = channels
-        self.kernel_size = np.array(checklist(kernel_size, n=dim), dtype=np.int)
+        self.kernel_size = check_conv_param(kernel_size, dim)
         if padding is None:
-            self.padding = np.floor(self.kernel_size / 2).astype(np.int)
-        else:
-            self.padding = np.array(checklist(padding, n=dim))
-        self.dilation = np.array(checklist(dilation, n=dim))
-        self.stride = np.array(checklist(stride, n=dim))
+            padding = np.floor(np.array(self.kernel_size) / 2).astype(np.int)
+        self.padding = check_conv_param(padding, dim)
+        self.dilation = check_conv_param(dilation, dim)
+        self.stride = check_conv_param(stride, dim)
         self.dim = dim
         self.bias = bias
         self.conv_class = conv_class
@@ -383,10 +389,10 @@ class ConvLayer(nn.Module):
     def _init_modules(self, conv_class, **kwargs) -> NoReturn:
         self.conv = self.conv_hash[conv_class][self.dim](in_channels=self.channels[0],
                                                          out_channels=self.channels[1],
-                                                         kernel_size=tuple(self.kernel_size.tolist()),
-                                                         stride=tuple(self.stride.tolist()),
-                                                         padding=tuple(self.padding.tolist()),
-                                                         dilation=tuple(self.dilation.tolist()),
+                                                         kernel_size=tuple(self.kernel_size),
+                                                         stride=tuple(self.stride),
+                                                         padding=tuple(self.padding),
+                                                         dilation=tuple(self.dilation),
                                                          bias=self.bias if self.bias is not None else False,
                                                          **kwargs)
 
@@ -409,7 +415,11 @@ class ConvLayer(nn.Module):
         """
         if not isinstance(output_dim, np.ndarray):
             output_dim = np.array(checklist(output_dim))
-        return self.stride * (output_dim - 1) - 2 * self.padding + self.dilation * (self.kernel_size - 1) + 1
+        stride = np.array(self.stride)
+        padding = np.array(self.padding)
+        dilation = np.array(self.dilation)
+        kernel_size = np.array(self.kernel_size)
+        return stride * (output_dim - 1) - 2 * padding + dilation * (kernel_size - 1) + 1
 
     def output_shape(self, input_dim: Union[Iterable[int], int]) -> np.ndarray:
         """
@@ -422,9 +432,31 @@ class ConvLayer(nn.Module):
         """
         if not isinstance(input_dim, np.ndarray):
             input_dim = np.array(checklist(input_dim))
-        return np.floor((input_dim + 2 * self.padding - self.dilation * (self.kernel_size - 1) - 1) / self.stride + 1)
+        stride = np.array(self.stride)
+        padding = np.array(self.padding)
+        dilation = np.array(self.dilation)
+        kernel_size = np.array(self.kernel_size)        
+        return np.floor((input_dim + 2 * padding - dilation * (kernel_size - 1) - 1) / stride + 1)
 
-    def forward(self, x: torch.Tensor, mod_closure: Callable = None, **kwargs) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Performs convolution.
+        Args:
+            x (torch.Tensor): input tensor
+            mod_closure (Callable): optional callback before non-linearity
+            **kwargs: optional keyword arguments passed to convolutional op
+        """
+        out = self.conv(x)
+        if hasattr(self, "dropout"):
+            out = self.dropout(out)
+        if hasattr(self, "norm"):
+            out = self.norm(out)
+        if hasattr(self, "activation"):
+            out = self.activation(out)
+        return out
+
+    @torch.jit.ignore
+    def __call__(self, x: torch.Tensor, mod_closure: Callable = None, **kwargs) -> torch.Tensor:
         """
         Performs convolution.
         Args:
@@ -463,10 +495,10 @@ class DeconvLayer(ConvLayer):
         conv_class: convolution type (options : "conv", "weighted")
         output_padding: output padding (default: 0)
         """
+        if kwargs.get('output_padding') is None:
+            kwargs['output_padding'] = (0,) * kwargs['dim']
         super(DeconvLayer, self).__init__(*args, **kwargs)
-        self.output_padding = kwargs.get('output_padding', 0)
-        if self.output_padding is None:
-            self.output_padding = (0,) * self.dim
+        self.output_padding = kwargs.get('output_padding')
 
     @classmethod
     def get_output_padding(cls, output_dim: Iterable[int], kernel_size: Union[int, Iterable[int]] = None,
@@ -520,7 +552,8 @@ class DeconvLayer(ConvLayer):
                     self.kernel_size - 1) - 1) / self.stride + 1)
         return out_shape
 
-    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+    @torch.jit.ignore
+    def __call__(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         """Performs deconvolution."""
         return super(DeconvLayer, self).forward(x, **kwargs)
 

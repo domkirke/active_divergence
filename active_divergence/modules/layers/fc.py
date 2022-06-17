@@ -10,7 +10,6 @@ from typing import Union, Tuple, Iterable, Callable
 
 DEFAULT_NNLIN = "ELU"
 
-
 ## Fully-connected layers & blocks
 class WeightedLinear(nn.Module):
     def __init__(self, input_dim, output_dim, bias=True) -> None:
@@ -59,7 +58,7 @@ class MLPLayer(nn.Module):
         super().__init__()
         modules = OrderedDict()
         self.input_dim = input_dim; self.output_dim = output_dim
-        self.linear = linear_hash[mode](np.prod(input_dim), np.prod(output_dim), bias=bias)
+        self.linear = linear_hash[mode](int(np.prod(input_dim)), int(np.prod(output_dim)), bias=bias)
         if dropout is not None:
             self.dropout = dropout_hash[1](dropout)
         if norm is not None and norm != "none":
@@ -73,7 +72,18 @@ class MLPLayer(nn.Module):
         self.modules = modules
         self._init_modules()
 
-    def forward(self, x: torch.Tensor, mod_closure: Callable = None):
+    def forward(self, x: torch.Tensor):
+        out = self.linear(x)
+        if hasattr(self, 'dropout'):
+            out = self.dropout(out)
+        if hasattr(self, 'norm'):
+            out = self.norm(out)
+        if hasattr(self, 'activation'):
+            out = self.activation(out)
+        return out
+
+    @torch.jit.ignore
+    def __call__(self, x: torch.Tensor, mod_closure: Callable = None):
         """
         Performs transformation.
         Inputs: 
@@ -237,7 +247,15 @@ class MLP(nn.Module):
             layers.append(layer_class(dims[i], dims[i+1], nnlin=nnlin[i], norm=current_norm, dropout=dropout[i], bias=bias[i], mode=mode[i]))
         self.module = nn.Sequential(*tuple(layers))
 
-    def forward(self, x: torch.Tensor, mod_closure: Union[Callable, Iterable[Callable]]=None, \
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        out = x
+        for i, mod in enumerate(self.module):
+            out = mod(out)
+        return out
+        
+
+    @torch.jit.ignore
+    def __call__(self, x: torch.Tensor, mod_closure: Union[Callable, Iterable[Callable]]=None, \
                 return_hidden: bool = False, trace: dict = None) -> Union[torch.Tensor, Tuple[torch.Tensor, Iterable[torch.Tensor]]]:
         """
         Performs MLP.

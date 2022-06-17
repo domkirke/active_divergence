@@ -1,6 +1,8 @@
 from collections import OrderedDict
 import omegaconf
-import numpy as np, os, torch, sys, torch.distributions as dist, copy, bisect
+import numpy as np, os, torch, sys, copy, bisect
+import active_divergence.distributions as dist
+from typing import List, Union, Tuple
 sys.path.append('../')
 
 def parse_slice(item, length):
@@ -12,7 +14,9 @@ def parse_slice(item, length):
 
 
 def checkdist(obj):
-    if isinstance(obj, str):
+    if obj is None:
+        return obj
+    elif isinstance(obj, str):
         return getattr(dist, obj)
     elif issubclass(obj, dist.Distribution):
         return obj
@@ -90,6 +94,18 @@ def checknumpy(tensor):
         return tensor
     elif torch.is_tensor(tensor):
         return tensor.cpu().detach().numpy()
+
+
+def flatten_batch(x: torch.Tensor, dim: int = -1):
+    batch_size = x.shape[:dim]
+    event_size = x.shape[dim:]
+    reshape_size = [-1]; reshape_size.extend([e for e in event_size])
+    return x.reshape(reshape_size), batch_size
+
+def reshape_batch(x: torch.Tensor, batch_size: List[int], dim: int = -1):
+    event_size = x.shape[dim:]
+    reshape_size = [e for e in batch_size]; reshape_size.extend([e for e in event_size])
+    return x.reshape(reshape_size)
 
 def print_stats(k, v):
     print(f"{k}: min={v.min():.4f}, max={v.max():.4f}, mean={v.mean():.4f}, std={v.std():.3f}")

@@ -1,13 +1,23 @@
-import torch, torch.nn as nn, torch.distributions as dist
+import torch, torch.nn as nn, active_divergence.distributions as dist
+from typing import Union
+
+class Dumb(nn.Module):
+    def __init__(self, out_nnlin: Union[nn.Module, None] = None, **kwargs) -> None:
+        super().__init__()
+        self.out_nnlin: Union[None, nn.Module]= out_nnlin
+    def forward(self, x: torch.Tensor):
+        if self.out_nnlin is not None:
+            x = self.out_nnlin(x)
+        return x
 
 class MLPBernoulli(nn.Module):
-    def __init__(self, out_nnlin: nn.Module = None, dim: int = None):
+    def __init__(self, out_nnlin: Union[nn.Module, None] = None, dim: int = None):
         """
         embeds the output of an MLP as a Bernoulli distribution.
         Args:
             out_nnlin (nn.Module) : non-linearity used (default : nn.Sigmoid())
         """
-        super(ConvNormal, self).__init__()
+        super(MLPBernoulli, self).__init__()
         self.out_nnlin = out_nnlin or nn.Sigmoid()
         self.dim = dim
 
@@ -20,12 +30,12 @@ class MLPBernoulli(nn.Module):
         return 1
 
     def forward(self, out: torch.Tensor) -> dist.Bernoulli:
-        if self.out_nnlin:
+        if self.out_nnlin is not None:
             out = self.out_nnlin(out)
         return dist.Bernoulli(out)
 
 class ConvBernoulli(MLPBernoulli):
-    def __init__(self, out_nnlin: nn.Module = None, dim: int = None):
+    def __init__(self, out_nnlin: Union[nn.Module, None] = None, dim: int = None):
         """
         embeds the output of a convolutional module as a Bernoulli distribution.
         Args:
@@ -36,8 +46,7 @@ class ConvBernoulli(MLPBernoulli):
 
 class MLPNormal(nn.Module):
     variance_modes = ['none', 'logvar', 'sigm3', 'sig']
-    eps = 1e-6
-    def __init__(self, out_nnlin=None, dim=None, varmode="sig"):
+    def __init__(self, out_nnlin: Union[nn.Module, None], dim: int = -1, varmode: str = "sig"):
         """
         embeds the output of an MLP as a Normal distribution. Splits the last dimension in 2 to obtain mu and variance.
         Args:
@@ -49,6 +58,7 @@ class MLPNormal(nn.Module):
         assert varmode in self.variance_modes
         self.varmode = varmode
         self.dim = dim
+        self.eps = torch.finfo(torch.get_default_dtype()).eps
 
     @property
     def required_dim_upsampling(self):
@@ -59,9 +69,8 @@ class MLPNormal(nn.Module):
         return 1
 
     def forward(self, out: torch.Tensor) -> dist.Normal:
-        dim = self.dim or -1
-        mu, std = out.split(out.shape[-1]//2, dim=dim)
-        if self.out_nnlin:
+        mu, std = out.split(out.shape[-1]//2, dim=self.dim)
+        if self.out_nnlin is not None:
             mu = self.out_nnlin(mu)
         if self.varmode == "logvar":
             std = torch.sqrt(torch.exp(std) + self.eps)
@@ -74,8 +83,7 @@ class MLPNormal(nn.Module):
 
 class ConvNormal(nn.Module):
     variance_modes = ['none', 'logvar', 'sigm3', 'sig']
-    eps = 1e-6
-    def __init__(self, out_nnlin: nn.Module = None, varmode="sigm3", dim: int = None):
+    def __init__(self, out_nnlin: Union[nn.Module, None] = None, varmode="sigm3", dim: int = None):
         """
         embeds the output of a convolutional module as a Normal distribution.
         splits the channel dimension in 2 to obtain mu and variance.
@@ -88,6 +96,7 @@ class ConvNormal(nn.Module):
         self.out_nnlin = out_nnlin
         self.varmode = varmode
         self.dim = dim
+        self.eps = torch.finfo(torch.get_default_dtype()).eps
 
     @property
     def required_channel_upsampling(self):
@@ -100,7 +109,7 @@ class ConvNormal(nn.Module):
     def forward(self, out: torch.Tensor) -> dist.Normal:
         dim = 1 if self.dim is None else -(self.dim + 1)
         mu, std = out.split(out.shape[dim]//2, dim=dim)
-        if self.out_nnlin:
+        if self.out_nnlin is not None:
             mu = self.out_nnlin(mu)
         if self.varmode == "logvar":
             std = torch.sqrt(torch.exp(std) + self.eps)
@@ -111,7 +120,7 @@ class ConvNormal(nn.Module):
         return dist.Normal(mu, std)
 
 class MLPCategorical(nn.Module):
-    def __init__(self, out_nnlin=None, logits=False, dim=-1):
+    def __init__(self, out_nnlin: Union[nn.Module, None], logits=False, dim=-1):
         """
         embeds the output of an MLP as  a Categorical distribution.
         Args:
@@ -120,7 +129,7 @@ class MLPCategorical(nn.Module):
             dim (str): categorical dimension (default: -1)
         """
         super(MLPCategorical, self).__init__()
-        self.out_nnlin = out_nnlin or (nn.Softmax(dim=-1) if logits else None)
+        self.out_nnlin = out_nnlin or (nn.Softmax(dim=-1) if not logits else None)
         self.logits = logits
         self.dim = dim
 
@@ -133,7 +142,7 @@ class MLPCategorical(nn.Module):
         return 1
 
     def forward(self, out):
-        if self.out_nnlin:
+        if self.out_nnlin is not None:
             out = self.out_nnlin(out)
         if self.logits:
             return dist.Categorical(logits=out)
@@ -142,7 +151,7 @@ class MLPCategorical(nn.Module):
 
 class ConvCategorical(MLPCategorical):
 
-    def __init__(self, out_nnlin=None, logits=False, dim=-1):
+    def __init__(self, out_nnlin: Union[nn.Module, None]=None, logits=False, dim=-1):
         """
         embeds the output of a convolutional module as a Categorical distribution.
         Args:
@@ -153,5 +162,5 @@ class ConvCategorical(MLPCategorical):
         super().__init__(out_nnlin, logits, dim)
 
 
-conv_dist_hash = {dist.Bernoulli: ConvBernoulli, dist.Normal: ConvNormal, dist.Categorical: ConvCategorical}
-mlp_dist_hash = {dist.Bernoulli: MLPBernoulli, dist.Normal: MLPNormal, dist.Categorical: MLPCategorical}
+conv_dist_hash = {dist.Bernoulli: ConvBernoulli, dist.Normal: ConvNormal, dist.Categorical: ConvCategorical, None: Dumb}
+mlp_dist_hash = {dist.Bernoulli: MLPBernoulli, dist.Normal: MLPNormal, dist.Categorical: MLPCategorical, None: Dumb}

@@ -1,11 +1,11 @@
 import abc
 from typing import Iterable, List
 import torch, torch.nn, sys, pdb
-import torch.distributions as dist
 sys.path.append('../')
 from active_divergence.losses.loss import Loss
 from active_divergence.losses import loss_utils as utils
 from active_divergence.utils import checklist
+import active_divergence.distributions as dist
 
 
 class ReconstructionLoss(Loss):

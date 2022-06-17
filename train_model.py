@@ -23,13 +23,13 @@ else:
     print("No GPU found.")
     use_gpu = 0
 
-@hydra.main(config_path="configs", config_name="config")
+@hydra.main(config_path="configs", config_name="config", version_base="1.2")
 def main(config: DictConfig):
     OmegaConf.set_struct(config, False)
     # import data
     data_module = getattr(data, config.data.module)(config.data)
     # import model
-    config.model.input_size = data_module.shape
+    config.model.input_shape = data_module.shape
     model = getattr(models, config.model.type)(config.model)
     # import callbacks
     callbacks = get_callbacks(config.get('callbacks'))
