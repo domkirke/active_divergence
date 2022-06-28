@@ -13,9 +13,11 @@ hydra:
 defaults:
   - data:
     - defaults
+    - dataset/audio
+    - transforms/dgt-1024
   - model: 
     - dcgan
-    - training/gan_wasserstein
+    - training/gan_adv
   - callbacks: audio_defaults
   - _self_
 
@@ -25,28 +27,32 @@ data:
     bitrate: 16
     sequence:
       length: 128
-      mode: random
+      mode: start 
       idx: -2
   transforms:
-    name: stft128_16k
+    name: dgt-512-magmel
     force: 0
     pre_transforms:
       - {type: Mono, args: {squeeze: 1}}
-      - {type: STFT, args: {nfft: 256, hop_size: 128, keep_nyquist: False}}
+      - {type: STFT, args: {n_fft: &n_fft 512, hop_length: 128}}
+      - {type: Magnitude, args: {contrast: log1p, n_fft: *n_fft, mel: 1, mode: unipolar}}
     transforms:
-      - {type: Magnitude, args:{contrast: log, normalize: {mode: bipolar}}}
+      - {type: Unsqueeze, args: {dim: -2}}
+  loader:
+    batch_size: 32
 
 model:
   discriminator:
     args:
       norm: none
-      channels: [64,128,256,512,1024]
+      channels: [64,128,256,512]
       kernel_size: 5
       stride: 2
+      out_nnlin: Sigmoid
   generator:
     args:
       norm: none
-      channels: [64,128,256,512,1024]
+      channels: [64,128,256,512]
       kernel_size: 5
       stride: 2
       out_nnlin: Tanh
@@ -56,7 +62,6 @@ model:
 
 pl_trainer:
   max_epochs: 1e5
-  gpus: [2]
   #limit_train_batches: 1
   #limit_val_batches: 1
 

@@ -8,6 +8,11 @@ The repository is organized as follows :
 - *configs*: the repository containg the configuration package to be combined with the hydra syntax
 - *train_model.py* : the general code to train any active_divergence model 
 
+## Install
+
+```
+git clone --recurse-submodules XXXXX
+```
 
 ## General quickview
 ### Data

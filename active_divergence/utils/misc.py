@@ -23,6 +23,18 @@ def checkdist(obj):
     else:
         raise TypeError('obj %s does not seem to be a distribution')
 
+def checksize(obj):
+    if obj is None:
+        return None
+    elif isinstance(obj, int):
+        return torch.Size([obj])
+    else:
+        try:
+            return torch.Size(obj)
+        except:
+            raise TypeError("could not convert %s in torch.Size"%type(obj))
+
+
 def filter_nans(x: np.ndarray, y: np.ndarray = None):
     idxs = np.where(np.isnan(x))
     if y is None:
@@ -38,6 +50,8 @@ def checklist(item, n=1, copy=False):
             item = [copy.deepcopy(item) for _ in range(n)]
         elif isinstance(item, omegaconf.listconfig.ListConfig):
             item = list(item)
+        elif isinstance(item, torch.Size):
+            item = [i for i in item]
         else:
             item = [item]*n
     return item
@@ -155,23 +169,31 @@ def kronecker(A, B):
         out[i] =  torch.einsum("ab,cd->acbd", A[i], B[i]).contiguous().view(A.size(1)*B.size(1),  A.size(2)*B.size(2))
     return out
 
-def frame(tensor, wsize, hsize, dim, pad=False):
+def pad(tensor: torch.Tensor, target_size: int, dim: int):
+    if tensor.size(dim) > target_size:
+        return tensor
+    tensor_size = list(tensor.shape)
+    tensor_size[dim] = target_size - tensor.shape[dim]
+    cat_tensor = torch.zeros(
+        tensor_size, dtype=tensor.dtype, device=tensor.device)
+    return torch.cat([tensor, cat_tensor], dim=dim)
+
+def frame(tensor: torch.Tensor, wsize: int, hsize: int, dim: int):
     if dim < 0:
         dim = tensor.ndim + dim
     if not tensor.is_contiguous():
         tensor = tensor.contiguous()
-    if pad:
-        pad(tensor)
-    else:
-        n_windows = (tensor.shape[dim] - wsize) // hsize
-        if tensor.shape[dim] >= (n_windows + 1) * hsize + wsize:
-            n_windows += 1
+    n_windows = tensor.shape[dim] // hsize
+    tensor = pad(tensor, n_windows * hsize + wsize,  dim)
     shape = list(tensor.shape)
-    strides = np.array(tensor.stride())
-    new_stride = int(np.prod(strides[dim:][strides[dim:]>0]))
-    shape = shape[:dim] + [n_windows, wsize] + shape[dim+1:]
-    strides = list(strides[:dim]*hsize) + [hsize * new_stride] + list(strides[dim:])
-    return torch.as_strided(tensor, tuple(shape), tuple(strides))
+    shape[dim] = n_windows
+    shape.insert(dim+1, wsize)
+    # shape = shape[:dim] + (n_windows, wsize) + shape[dim+1:]
+    strides = [tensor.stride(i) for i in range(tensor.ndim)]
+    strides.insert(dim, hsize)
+    # strides = strides[:dim] + (hsize,) + strides[dim:]
+    # strides = list(strides[dim:], (strides[dim]*hsize) + [hsize * new_stride] + list(strides[dim+1:])
+    return torch.as_strided(tensor, shape, strides)
 
 def overlap_add(array, wsize, hsize, window=None):
     batch_shape = array.shape[:-2]

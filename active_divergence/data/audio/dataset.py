@@ -99,7 +99,10 @@ class AudioDataset(Dataset):
         if transforms.needs_scaling and len(self.data) > 0:
             self.scale_transform(self.scale_amount)
         if transforms.scriptable:
-            transforms = torch.jit.script(transforms)
+            try:
+                transforms = torch.jit.script(transforms)
+            except Exception as e:
+                print("Error occurred when scripting audio transorm : %s"%e)
     def _gettransform(self):
         return self._transforms
     def _deltransform(self):
@@ -218,7 +221,7 @@ class AudioDataset(Dataset):
         augment = kwargs.get('augment', self.augment)
         if len(self.augmentations) > 0 and augment:
             for a in self.augmentations:
-                data, metadata = a(data, metadata)
+                data, metadata = a(data, y=metadata)
         # collate data
         if isinstance(data, list):
             try:
@@ -402,7 +405,8 @@ class AudioDataset(Dataset):
             item = self.partitions[item]
 
         dataset = type(self)(root=self.root_directory, sr = self.sr, target_length=self.target_length,
-                             bitrate=self.bitrate, dtype=self.dtype, transforms=self._transforms)
+                             bitrate=self.bitrate, dtype=self.dtype, 
+                             transforms=self._transforms, augmentations=self._augmentations)
 
         if isinstance(self.data, lardon.OfflineDataList):
             dataset.data = lardon.OfflineDataList([self.data.entries[d] for d in item])

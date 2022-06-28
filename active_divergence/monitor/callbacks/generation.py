@@ -197,7 +197,10 @@ class AudioReconstructionMonitor(Callback):
             if hasattr(model, "input_dim"):
                 data = fit_data(data, model.input_dim, has_batch = False)
             # make batch
-            original, generation = model.reconstruct(data.unsqueeze(0))
+            try:
+                original, generation = model.reconstruct(data.unsqueeze(0))
+            except:
+                continue
             original = original[0].cpu()
             generation = generation[0]
             if isinstance(generation, dist.Normal):

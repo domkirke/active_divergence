@@ -78,6 +78,8 @@ class MLPNormal(nn.Module):
             std = torch.sigmoid(std)
         elif self.varmode == "sigm3":
             std = torch.sigmoid(std-1) + 1e-5
+        else:
+            print('unknown variance mode in MLPNormal : %s'%self.varmode)
         return dist.Normal(mu, std)
 
 

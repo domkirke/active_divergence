@@ -1,8 +1,9 @@
 type: ConvEncoder
 args:
-  channels: [32,32,32,32]
+  channels: [64,64,64,64]
   dilation: [1,1,1,1]
-  stride: [4,2,2,1]
-  kernel_size: [9,7,5,3]
+  stride: [1,2,2,4]
+  kernel_size: [3,5,7,9]
   nnlin: ELU
+  bias: True
   norm: batch

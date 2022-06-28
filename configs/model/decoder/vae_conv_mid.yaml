@@ -1,10 +1,10 @@
 type: DeconvEncoder
 args:
-  channels: [32,32,32,32]
+  layer: DeconvLayer
+  nnlin: ELU
+  channels: [64,64,64,64]
   dilation: [1,1,1,1]
   stride: [4,2,2,1]
   kernel_size: [9,7,5,3]
-  layer: DeconvLayer
   final_conv: 0
-  nnlin: ELU
-  bias: False
+  bias: True 

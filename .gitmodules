@@ -1,0 +1,9 @@
+[submodule "active_divergence/models/rave/RAVE"]
+	path = active_divergence/models/rave/RAVE
+	url = https://github.com/domkirke/RAVE.git
+[submodule "active_divergence/models/diffwave/diffwave"]
+	path = active_divergence/models/diffwave/diffwave
+	url = https://github.com/domkirke/diffwave.git
+[submodule "active_divergence/models/ddsp/ddsp_pytorch"]
+	path = active_divergence/models/ddsp/ddsp_pytorch
+	url = https://github.com/domkirke/ddsp_pytorch.git

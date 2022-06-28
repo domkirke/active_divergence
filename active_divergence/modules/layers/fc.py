@@ -1,7 +1,7 @@
 import sys
 sys.path.append('../')
 import torch, torch.nn as nn
-import numpy as np
+import numpy as np, math
 from active_divergence.modules import calculate_gain
 from active_divergence.utils import checklist, checktuple
 from collections import OrderedDict
@@ -266,7 +266,7 @@ class MLP(nn.Module):
             trace (dict): trace dictionary to populate
         """
         batch_size = x.shape[:-(len(self.input_dim))]
-        out = x.reshape(np.prod(batch_size), np.prod(self.input_dim))
+        out = x.reshape(math.prod(batch_size), math.prod(self.input_dim))
         hidden = []
         if mod_closure is not None:
             mod_closure = checklist(mod_closure, len(self.module))

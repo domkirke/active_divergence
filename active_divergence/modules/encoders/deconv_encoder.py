@@ -3,7 +3,7 @@ import sys, pdb
 
 sys.path.append('../')
 import torch, torch.nn as nn, numpy as np, math
-from active_divergence.utils import checklist, checktuple, checkdist, reshape_batch, flatten_batch
+from active_divergence.utils import checklist, checksize, checkdist, reshape_batch, flatten_batch
 from omegaconf import OmegaConf
 from active_divergence.modules import conv, layers as layers, mlp_dist_hash, conv_dist_hash, Reshape
 import active_divergence.distributions as dist
@@ -41,8 +41,8 @@ class DeconvEncoder(nn.Module):
         super(DeconvEncoder, self).__init__()
         # access to encoder may be useful for skip-connection / pooling operations
         # set dimensionality parameters
-        self.input_shape = checktuple(config.get('input_shape')) if config.get('input_shape') else None
-        self.target_shape = config.get('target_shape')
+        self.input_shape = checksize(config.get('input_shape'))
+        self.target_shape = checksize(config.get('target_shape'))
         self.out_channels = self.target_shape[0] if self.target_shape else config.get('out_channels')
 
         # set convolution parameters
@@ -118,8 +118,8 @@ class DeconvEncoder(nn.Module):
     def _init_conv_modules(self):
         modules = []
         Layers = [getattr(layers, l) for l in self.Layer]
+        # retrieve output paddings
         if self.target_shape is not None:
-            # retrieve output paddings
             current_shape = np.array(self.target_shape[1:])
             output_padding = [None] * self.n_layers
             for n in reversed(range(self.n_layers)):
@@ -152,8 +152,6 @@ class DeconvEncoder(nn.Module):
                                       **self.block_args[n])
             modules.append(current_layer)
         self.conv_modules = nn.ModuleList(modules)
-
-
 
     def _init_unfold_modules(self):
         # init flattening modules
@@ -208,7 +206,7 @@ class DeconvEncoder(nn.Module):
             if self.input_shape is None:
                 self.input_shape = [self.channels[0]] + [int(f) for f in final_shape]
             else:
-                assert self.input_shape == final_shape, "got input_shape == %s, but final shape is : %s"%(self.input_shape, final_shape)
+                assert self.input_shape == final_shape, "got input_shape == %s, but input shape for output shape %s with current architecture is : %s"%(self.input_shape, self.target_shape, final_shape)
             self.index_flatten = False
         else:
             raise ValueError("got reshape_method=%s"%self.reshape_method)
@@ -218,6 +216,7 @@ class DeconvEncoder(nn.Module):
 
     def _init_final_convs(self):
         out_channels = self.out_channels
+        # set ouput channels according to distribution
         if self.dist_module is not None:
             if hasattr(self.dist_module, "required_channel_upsampling"):
                 out_channels *= self.dist_module.required_channel_upsampling
@@ -231,8 +230,10 @@ class DeconvEncoder(nn.Module):
                 self.final_conv = layers.conv_hash['conv'][self.dim](self.channels[-1], out_channels, 1)
         else:
             final_convs = []
-            if self.has_flatten and self.index_flatten:
+            # if module has a flatten layer, also create a final conv for this layers
+            if (self.flatten_module is not None) and self.index_flatten:
                 final_convs.append(layers.conv_hash['conv'][self.dim](self.channels[0], out_channels, 1))
+            # create a final conv for every layer (generalization of RGB modules in PGAN)
             for n in range(1, len(self.channels)):
                 final_convs.append(layers.conv_hash['conv'][self.dim](self.channels[n], out_channels, 1))
             self.final_conv = nn.ModuleList(final_convs)
@@ -262,6 +263,7 @@ class DeconvEncoder(nn.Module):
         for i, conv_module in enumerate(self.conv_modules):
             # keep last output for transition
             # perform conv
+            last_out = out
             if mod is not None:
                 if isinstance(mod, (list, tuple)):
                     out = conv_module(out, mod=mod[i])
@@ -318,6 +320,7 @@ class DeconvEncoder(nn.Module):
         # process convolutions
         hidden = []
         for i, conv_module in enumerate(self.conv_modules):
+            last_out = out if self.mode == "skip" else out
             out = conv_module(out)
             hidden.append(out)
 
@@ -356,7 +359,7 @@ class DeconvEncoder(nn.Module):
         if 0 in items:
             config.input_shape = self.input_shape
         if len(self.conv_modules) - 1 in items:
-            config.target_shape = self.target_shape
+            config.target_shape = checklist(self.target_shape)
             config.out_channels = self.out_channels
 
         # set convolution parameters
@@ -394,6 +397,7 @@ class DeconvEncoder(nn.Module):
             final_convs.append(self.final_conv[items[0]])
         for i in items:
             if i == 0:
+                module.reshape_method = self.reshape_method
                 module.flatten_type = self.flatten_type
                 module.flatten_module = self.flatten_module
                 if not (self.has_flatten or self.index_flatten):

@@ -1,14 +1,17 @@
+from yaml import serialize
 from active_divergence.utils.config import ConfigItem
 import numpy as np, torch, torch.nn as nn, torch.nn.functional as F, sys, pdb, re
 sys.path.append('../')
 from active_divergence.models.model import Model, ConfigType
 from active_divergence.models.gans import GAN, parse_additional_losses
-from active_divergence.modules import encoders
+from active_divergence.modules import encoders, OverlapAdd
 from active_divergence import distributions as dist
-from active_divergence.utils import checklist, checkdir, trace_distribution
+from active_divergence.utils import checklist, checkdir, trace_distribution, reshape_batch, flatten_batch
 from omegaconf import OmegaConf, ListConfig
-from active_divergence.losses import get_regularization_loss, get_distortion_loss, priors
+from sklearn import decomposition 
+from active_divergence.losses import get_regularization_loss, get_distortion_loss, priors, regularization
 from typing import Dict, Union, Tuple, Callable
+
 
 class AutoEncoder(Model):
     def __init__(self, config: OmegaConf=None, **kwargs):
@@ -65,6 +68,15 @@ class AutoEncoder(Model):
         reg_config = config.training.get('regularization', OmegaConf.create())
         self.regularization_loss = get_regularization_loss(reg_config)
         self.prior = getattr(priors, config.training.get('prior', "isotropic_gaussian"))
+
+        # dimensionality reduction
+        dim_red_type = config.get('dim_red', "PCA")
+        self.dimred_type = getattr(decomposition, dim_red_type)
+        self.dimred_batches = config.get('dim_red_batches', 128)
+        self.register_buffer("latent_dimred", torch.eye(config.latent.dim))
+        self.register_buffer("latent_mean", torch.zeros(config.latent.dim))
+        self.register_buffer("fidelity", torch.zeros(config.latent.dim))
+        self._latent_buffer = []
 
         # load from checkpoint
         if config_checkpoint:
@@ -168,6 +180,12 @@ class AutoEncoder(Model):
         else:
             return loss
 
+    def _update_latent_buffer(self, z_params):
+        if isinstance(z_params, dist.Normal):
+            z_params = z_params.mean
+        if len(self._latent_buffer) <= self.dimred_batches:
+            self._latent_buffer.append(z_params.detach().cpu())
+
     def training_step(self, batch, batch_idx):
         batch, y = batch
         # training_step defined the train loop.
@@ -175,8 +193,31 @@ class AutoEncoder(Model):
         loss, losses = self.loss(batch, x, z_params, z, epoch=self.trainer.current_epoch, drop_detail=True)
         losses['beta'] = self.get_beta()
         self.log_losses(losses, "train", prog_bar=True)
+        self._update_latent_buffer(z_params)
         return loss
 
+    def on_train_epoch_end(self):
+        # shamelessly taken from Caillon's RAVE
+        latent_pos = torch.cat(self._latent_buffer, 0).reshape(-1, self.config.latent.dim)
+        self.latent_mean.copy_(latent_pos.mean(0))
+
+        dimred = self.dimred_type(n_components=latent_pos.size(-1))
+        dimred.fit(latent_pos.cpu().numpy())
+        components = dimred.components_
+        components = torch.from_numpy(components).to(latent_pos)
+        self.latent_dimred.copy_(components)
+
+        var = dimred.explained_variance_ / np.sum(dimred.explained_variance_)
+        var = np.cumsum(var)
+        self.fidelity.copy_(torch.from_numpy(var).to(self.fidelity))
+
+        var_percent = [.8, .9, .95, .99]
+        for p in var_percent:
+            self.log(f"{p}%_manifold",
+                    np.argmax(var > p).astype(np.float32))
+        self.trainer.logger.experiment.add_image("latent_dimred", components.unsqueeze(0).numpy(), self.trainer.current_epoch)
+        self._latent_buffer = []
+        
     def validation_step(self, batch, batch_idx):
         batch, y = batch
         x, z_params, z = self.full_forward(batch, batch_idx)
@@ -208,30 +249,16 @@ class AutoEncoder(Model):
             generations.append(x)
         return torch.stack(generations, 1)
 
-    def get_scripted(self, transform: Union[Callable, None] = None):
-        return torch.jit.script(ScriptableAutoEncoder(self, transform))
-
-class ScriptableAutoEncoder(nn.Module):
-    def __init__(self, auto_encoder: AutoEncoder, transform: Union[Callable, None] = None):
-        super().__init__()
-        self.encoder = auto_encoder.encoder
-        self.decoder = auto_encoder.decoder
-        self.transform = transform
-
-    @torch.jit.export
-    def forward(self, x: torch.Tensor, sample: bool = False):
-        if self.transform is not None:
-            x = self.transform(x)
-        z = self.encoder(x)
-        if sample:
-            decoder_input = z.sample()
+    def get_scripted(self, mode: str = "audio", script: bool=True, **kwargs):
+        if mode == "audio":
+            scriptable_model = ScriptableAudioAutoEncoder(self, **kwargs)
         else:
-            decoder_input = z.mean
-        x_rec = self.decoder(decoder_input).mean
-        if self.transform is not None:
-            x_rec = self.transform.invert(x_rec)
-        return x_rec
-        
+            raise ValueError("error while scripting model %s : mode %s not found"%(type(self), mode))
+        if script:
+            return torch.jit.script(scriptable_model)
+        else:
+            return scriptable_model
+
 
 
 class InfoGAN(GAN):
@@ -345,3 +372,125 @@ class InfoGAN(GAN):
 
         
         
+#%% Scriptable Auto-Encoders
+
+class ScriptableAudioAutoEncoder(nn.Module):
+    def __init__(self, auto_encoder: AutoEncoder, transform: Union[Callable, None] = None, 
+                 use_oa: bool = False, win_length: int = None, hop_length: int = None,
+                 use_dimred: bool = True, export_for_nn: bool = True):
+        super().__init__()
+        self.transform = transform
+        self.encoder = auto_encoder.encoder
+        self.encoder_type = auto_encoder.encoder.target_dist
+        self.decoder = auto_encoder.decoder
+        self.decoder_type = auto_encoder.encoder.target_dist
+        # overlap add
+        win_length = win_length or self.encoder.input_shape[-1]
+        hop_length = hop_length or hop_length
+        self.overlap_add = OverlapAdd(win_length, hop_length, transform=transform)
+        self.use_oa = use_oa
+        if self.use_oa:
+            self.transform = self.transform.realtime()
+        # nn~ parameters
+        # by default, input is considered as raw; hence the ratio is the input
+        self.register_buffer("forward_params", torch.tensor([self.encoder.input_shape[0], 1, self.decoder.target_shape[0], 1]))
+        self.register_buffer("encode_params", torch.tensor([self.encoder.input_shape[0], 1, auto_encoder.config.latent.dim, hop_length]))
+        self.register_buffer("decode_params", torch.tensor([auto_encoder.config.latent.dim, hop_length, self.decoder.target_shape[0], 1]))
+        # dim reduction parameters
+        self.register_buffer("latent_dimred", auto_encoder.latent_dimred)
+        self.register_buffer("latent_mean", auto_encoder.latent_mean)
+        self.register_buffer("fidelity", auto_encoder.fidelity)
+        self.use_dimred = use_dimred
+        self.export_for_nn = export_for_nn
+
+    def project_z(self, z:torch.Tensor):
+        z, batch_size = flatten_batch(z, dim=-2)
+        z = z - self.latent_mean
+        z = nn.functional.conv1d(z.transpose(-1,-2), self.latent_dimred.unsqueeze(-1)).transpose(-1,-2)
+        z = reshape_batch(z, batch_size, dim=-2)
+        return z
+
+    def unproject_z(self, z:torch.Tensor):
+        z, batch_size = flatten_batch(z, dim=-2)
+        z = nn.functional.conv1d(z.transpose(-1,-2), self.latent_dimred.t().unsqueeze(-1)).transpose(-1,-2)
+        z = z + self.latent_mean
+        z = reshape_batch(z, batch_size, dim=-2)
+        return z
+
+    @torch.jit.export
+    def encode(self, x: torch.Tensor, sample: bool = False):
+        if self.use_oa:
+            x = self.overlap_add(x)
+            x_transformed = []
+            for i in range(x.size(-2)):
+                x_tmp = x[..., i, :]
+                if self.transform is not None:
+                    x_transformed.append(self.transform(x_tmp))
+            x = torch.stack(x_transformed, dim=-(len(self.encoder.input_shape) + 1))
+        else:
+            if self.transform is not None:
+                x = self.transform(x)
+        z = self.encoder(x)
+        if sample:
+            out = z.sample()
+        else:
+            out = z.mean 
+        out = self.project_z(out)
+        if self.export_for_nn:
+            out = out.transpose(-2, -1)
+        return out
+
+    @torch.jit.export
+    def decode(self, z:torch.Tensor):
+        if self.export_for_nn:
+            z = z.transpose(-2, -1)
+        if self.use_dimred:
+            z = self.unproject_z(z)
+        x = self.decoder(z).mean
+        if self.use_oa:
+            outs = []
+            iter_dim = -(len(self.encoder.input_shape) + 1)
+            for i in range(x.size(iter_dim)):
+                x_tmp = x.index_select(-(len(self.encoder.input_shape) + 1), torch.tensor(i)).squeeze(iter_dim)
+                if self.transform is not None:
+                    x_tmp = self.transform.invert(x_tmp)
+                outs.append(x_tmp)
+            outs = torch.stack(outs, dim=-2)
+            x = self.overlap_add.invert(outs)
+        else:
+            if self.transform is not None:
+                x = self.transform.invert(x)
+        return x 
+
+    @torch.jit.export
+    def forward(self, x: torch.Tensor, sample: bool = False):
+        if self.use_oa:
+            x = self.overlap_add(x)
+            outs = []
+            for i in range(x.size(-2)):
+                x_tmp = x[..., i, :]
+                if self.transform is not None:
+                    x_tmp = self.transform(x_tmp)
+                z = self.encoder(x_tmp)
+                if sample:
+                    decoder_input = z.sample()
+                else:
+                    decoder_input = z.mean
+                x_rec = self.decoder(decoder_input).mean
+                if self.transform is not None:
+                    x_rec = self.transform.invert(x_rec)
+                outs.append(x_rec)
+            outs = torch.stack(outs, -2)
+            outs = self.overlap_add.invert(outs)
+        else:
+            if self.transform is not None:
+                x = self.transform(x)
+            z = self.encoder(x)
+            if sample:
+                decoder_input = z.sample()
+            else:
+                decoder_input = z.mean
+            outs = self.decoder(decoder_input).mean
+            if self.transform is not None:
+                outs = self.transform.invert(outs)
+        return outs

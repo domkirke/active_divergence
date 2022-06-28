@@ -35,7 +35,7 @@ def normal_(mean=0.0, std=0.1):
         return input
     return normal_
 
-def salt_and_pepper_(prob=0.2):
+def mask_(prob=0.2):
     def salt_and_pepper_(module, input):
         input = list(input)
         for i in range(len(input)):

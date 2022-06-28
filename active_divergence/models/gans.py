@@ -41,21 +41,21 @@ class GAN(Model):
         config_checkpoint = config.get('config_checkpoint')
         super().__init__(config=config)
 
-        input_size = config.get('input_size')
+        input_shape = config.get('input_shape')
         # setup latent
         config.latent = config.get('latent')
         self.prior = getattr(priors, config.latent.get('prior', "isotropic_gaussian"))
         # setup generator
         config.generator = config.get('generator')
-        if config.latent.get('dim') and config.generator.args.get('input_size') is None:
-            config.generator.args.input_size = config.latent.dim
-        config.generator.args.target_shape = input_size
+        if config.latent.get('dim') and config.generator.args.get('input_shape') is None:
+            config.generator.args.input_shape = config.latent.dim
+        config.generator.args.target_shape = input_shape
         self.init_generator(config.generator)
         if config.latent.get('dim') is None:
-            config.latent.dim = self.generator.input_size
+            config.latent.dim = self.generator.input_shape
         # setup discriminator
         config.discriminator = config.get('discriminator')
-        config.discriminator.args.input_size = input_size
+        config.discriminator.args.input_shape = input_shape
         self.init_discriminator(config.discriminator)
         self.input_augmentations = None
         if config.discriminator.get('input_augmentations'):
@@ -102,16 +102,7 @@ class GAN(Model):
             batch_shape = batch.shape[:batch_len]
         else:
             batch_shape = shape
-        z = self.prior((*batch_shape, *self.generator.input_size)).sample()
-        if self.config.latent.get('concat_metadata'):
-            y = y or {}
-            for t, v in self.config.latent.concat_metadata.items():
-                if y.get(t) is None:
-                    current_meta = torch.randint(0, v['dim'], batch_shape)
-                else:
-                    current_meta = y[t]
-                
-
+        z = self.prior((*batch_shape, *self.generator.input_shape)).sample()
         return z.to(self.device)
 
     def full_forward(self, batch, batch_idx=None, trace=None, sample=True):
@@ -171,6 +162,11 @@ class GAN(Model):
 
     def generate(self, x, z, trace=None):
         return self.generator(z, trace=trace)
+
+    def decode(self, z=None):
+        #TODO better batch shape handling (quick fix for NIME)
+        z = z.reshape(z.shape[0], *self.generator.input_shape)
+        return self.generate(None, z)
 
     def discriminate(self, x, z, return_hidden=False, trace=None):
         if isinstance(x, dist.Distribution):
@@ -341,7 +337,7 @@ class GAN(Model):
         temperature = checklist(temperature)
         generations = []
         for t in temperature:
-            z = torch.randn((n_samples, *self.generator.input_size), device=self.device) * t
+            z = torch.randn((n_samples, *self.generator.input_shape), device=self.device) * t
             x = self.generator(z)
             if isinstance(x, dist.Distribution):
                 if sample:
@@ -600,7 +596,7 @@ class ProgressiveGAN(GAN):
         temperature = checklist(temperature)
         generations = []
         for t in temperature:
-            z = self.prior((n_samples, *self.generator.input_size), device=self.device).sample() * t
+            z = self.prior((n_samples, *self.generator.input_shape), device=self.device).sample() * t
             if self._current_phase is not None:
                 x = self._get_sub_generator(self._current_phase)(z)
             else:
@@ -617,7 +613,7 @@ class ProgressiveGAN(GAN):
 class ModulatedGAN(ProgressiveGAN):
     def __init__(self, config=None, encoder=None, **kwargs) -> None:
         # generator input is not the latent vector, but a constant
-        # config.generator.args.input_size = config.generator.args.channels[-1]
+        # config.generator.args.input_shape = config.generator.args.channels[-1]
         config.generator.args.reshape_method="none"
         super().__init__(config=config, **kwargs)
         # build encode
@@ -626,7 +622,7 @@ class ModulatedGAN(ProgressiveGAN):
         self.init_encoder(self.config.encoder)
         self.config.training.style_mixing_prob = self.config.training.get('style_mixing_prob', 0.9)
         # build constant input
-        self.const = nn.Parameter(torch.randn(self.generator.input_size))
+        self.const = nn.Parameter(torch.randn(self.generator.input_shape))
         self.config.training.path_length_decay = self.config.training.get('path_length_decay', 1e-2)
         self.register_buffer("path_means", torch.tensor(torch.nan))
         self.save_hyperparameters(dict(self.config))
@@ -634,7 +630,7 @@ class ModulatedGAN(ProgressiveGAN):
     def init_encoder(self, encoder_config):
         encoder_args = encoder_config.get('args', {})
         if encoder_config.mode == "sequential":
-            encoder_args['input_size'] = self.config.latent.get('dim', 512)
+            encoder_args['input_shape'] = self.config.latent.get('dim', 512)
             encoder_args['target_shape'] = encoder_args.get('target_shape', 512)
             self.encoder = getattr(encoders, encoder_config.get('type', 'MLPEncoder'))(encoder_args)
         else:
@@ -648,7 +644,7 @@ class ModulatedGAN(ProgressiveGAN):
 
     def init_generator(self, config: OmegaConf) -> None:
         generator_type = config.type or "DeconvEncoder"
-        config.args.input_size = None
+        config.args.input_shape = None
         config.args.reshape_method="none"
         config.args.layer = config.args.get('layer', 'ModUpsamplingBlock')
         self.generator = getattr(encoders, generator_type)(config.args)
@@ -664,9 +660,9 @@ class ModulatedGAN(ProgressiveGAN):
     def sample_prior(self, batch=None, shape=None):
         if batch is not None:
             batch_len = len(batch.shape) - len(self.generator.target_shape)
-            z = self.prior((*batch.shape[:batch_len], *self.encoder.input_size)).sample()
+            z = self.prior((*batch.shape[:batch_len], *self.encoder.input_shape)).sample()
         else:
-            z = self.prior(*shape, *self.encoder.input_size).sample()
+            z = self.prior(*shape, *self.encoder.input_shape).sample()
         return z.to(self.device)
 
     def get_modulations(self, z, trace=None):
@@ -699,9 +695,9 @@ class ModulatedGAN(ProgressiveGAN):
                 return (self.sample_prior(batch, shape, 0), self.sample_prior(batch, shape, 0))
         if batch is not None:
             batch_len = len(batch.shape) - len(self.generator.target_shape)
-            z = self.prior((*batch.shape[:batch_len], *self.encoder.input_size)).sample()
+            z = self.prior((*batch.shape[:batch_len], *self.encoder.input_shape)).sample()
         else:
-            z = self.prior(*shape, *self.encoder.input_size).sample()
+            z = self.prior(*shape, *self.encoder.input_shape).sample()
         return z.to(self.device)
 
     def generate(self, batch, z, eps=None, trace=None):

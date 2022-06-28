@@ -27,6 +27,7 @@ else:
 def main(config: DictConfig):
     OmegaConf.set_struct(config, False)
     # import data
+    config.data.loader['num_workers'] = config.data.loader.get('num_workers', os.cpu_count())
     data_module = getattr(data, config.data.module)(config.data)
     # import model
     config.model.input_shape = data_module.shape
@@ -36,7 +37,9 @@ def main(config: DictConfig):
     # setup trainer
     trainer_config = config.get('pl_trainer', {})
     trainer_config['gpus'] = config.get('gpus', use_gpu)
-    trainer = pl.Trainer(**config.get('pl_trainer', {}), callbacks=callbacks)
+    trainer_config['default_root_dir'] = f"{config.rundir}/{config.name}"
+    trainer_config['weights_save_path'] = f"{config.rundir}/{config.name}/models"
+    trainer = pl.Trainer(**trainer_config, callbacks=callbacks)
     if bool(config.get('check')):
         pdb.set_trace()
     # train!

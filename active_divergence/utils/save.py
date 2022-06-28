@@ -1,7 +1,17 @@
-import re, os, dill, shutil
+import re, os, dill, torch
 from omegaconf import OmegaConf
 from pytorch_lightning import LightningDataModule
+from active_divergence import models
 from active_divergence.utils import checkdir
+
+def get_model_versions(folder):
+    models_path = os.path.join(folder, "models")
+    name = os.path.basename(folder)
+    current_files = list(filter(lambda x: os.path.splitext(x)[1] == ".ckpt", os.listdir(models_path)))
+    versions = list(filter(lambda x: x is not None, [re.match(f"{name}-v(\d+).ckpt", f) for f in current_files]))
+    if len(versions) != 0:
+        versions = list(map(int, [v[1] for v in versions]))
+    return versions
 
 def save_trainig_config(config: OmegaConf, data: LightningDataModule, path: str = None, name: str = None):
     """Saves training configurations and transforms in the training directory."""
@@ -9,25 +19,18 @@ def save_trainig_config(config: OmegaConf, data: LightningDataModule, path: str 
         path = config.rundir
     if name is None:
         name = config.name
-    config_path = f"{path}/{name}"
-    models_path = f"{path}/{name}/{name}"
+    config_path = os.path.join(path, name)
+    models_path = os.path.join(path, name, "models")
     checkdir(models_path)
-    current_files = list(filter(lambda x: os.path.splitext(x)[1] == ".ckpt", os.listdir(models_path)))
-    versions = list(filter(lambda x: x is not None, [re.match(f"{name}-v(\d+).ckpt", f) for f in current_files]))
-    current_version = 1 if len(versions) == 0 else max(map(int, [v[1] for v in versions])) + 1
+    versions = get_model_versions(config_path)
+    current_version = 1 if len(versions) == 0 else max(versions) + 1
     name = f'{name}-v{current_version}'
-    checkdir(config_path+"/configs")
-    with open(f"{config_path}/configs/{name}.yaml", "w+") as f:
+    checkdir(os.path.join(config_path, "configs"))
+    with open(os.path.join(config_path, "configs", f"{name}.yaml"), "w+") as f:
         f.write(OmegaConf.to_yaml(config))
     if hasattr(data, "full_transforms"):
-        checkdir(config_path+"/transforms")
-        with open(f"{config_path}/transforms/transforms_{name}.ct", 'wb') as f:
+        checkdir(os.path.join(config_path, "transforms"))
+        with open(os.path.join(config_path, "transforms", f"{name}.ct"), 'wb') as f:
             dill.dump(data.full_transforms, f)
-    # # as pytorch lightning renames the ckpt files if several versions are available,
-    # # we have to do the same with tranforms and configs
-    # if (os.path.exists(f"{config_path}/configs/{name}.yaml")) and (current_version is not None):
-    #     shutil.move(f"{config_path}/configs/{name}.yaml", f"{config_path}/configs/{name}-v1.yaml")
-    # if (os.path.exists(f"{config_path}/transforms/transforms_{name}.ct")) and (current_version is not None):
-    #     shutil.move(f"{config_path}/transforms/transforms_{name}.ct", f"{config_path}/transforms/transforms_{name}-v1.ct")
     
     

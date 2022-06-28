@@ -1,8 +1,11 @@
 from . import weights
 from . import hooks
 import re, torch, pdb
+from omegaconf import OmegaConf
 
 def hack_model(model, hack_config):
+    if isinstance(hack_config, dict):
+        hack_config = OmegaConf.create(hack_config)
     if not hack_config.get('weights'):
         return
     parameters_regex = list(hack_config.weights.keys())

@@ -1,11 +1,9 @@
 import torch, torch.nn as nn, numpy as np, pdb
 
-
-
 def normal_(parameter, mean=0.0, std=0.1):
     parameter.data = parameter.data + mean + std * torch.randn_like(parameter.data)
 
-def salt_and_pepper_(parameter, prob=0.2):
+def mask_(parameter, prob=0.2):
     mask = torch.full_like(parameter.data, prob).to(parameter.device)
     noise = torch.bernoulli(1-mask)
     parameter.data = parameter.data * noise

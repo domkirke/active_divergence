@@ -3,7 +3,7 @@ import sys, pdb
 
 sys.path.append('../')
 import torch, torch.nn as nn, numpy as np, math
-from active_divergence.utils import checklist, checktuple, checkdist, reshape_batch, flatten_batch
+from active_divergence.utils import checklist, checktuple, checkdist, checksize, reshape_batch, flatten_batch
 from omegaconf import OmegaConf
 from active_divergence.modules import conv, layers as layers, mlp_dist_hash, conv_dist_hash, Reshape
 import active_divergence.distributions as dist
@@ -48,7 +48,7 @@ class ConvEncoder(nn.Module):
         """
         super(ConvEncoder, self).__init__()
         # convolutional parameters
-        self.input_shape = config.get('input_shape')
+        self.input_shape = checksize(config.get('input_shape'))
         self.mode = config.get('mode', "forward")
         self.channels = checklist(config.channels)
         self.n_layers = len(self.channels) - 1
@@ -68,7 +68,7 @@ class ConvEncoder(nn.Module):
         self.block_args = checklist(config.get('block_args', {}), n=self.n_layers)
 
         # flattening parameters
-        self.target_shape = config.get('target_shape')
+        self.target_shape = checksize(config.get('target_shape'))
         self.target_dist = config.get('target_dist')
         self.index_flatten = config.get('index_flatten', True)
         self.reshape_method = config.get('reshape_method', "flatten")
@@ -96,9 +96,9 @@ class ConvEncoder(nn.Module):
     def _init_conv_modules(self):
         modules = []
         if self.multi_preconv:
-            self.pre_conv = nn.ModuleList([layers.conv_hash['conv'][self.dim](self.input_shape[0], self.channels[0], 1)])
-        else:
             self.pre_conv = nn.ModuleList([layers.conv_hash['conv'][self.dim](self.input_shape[0], c, 1) for c in self.channels])
+        else:
+            self.pre_conv = nn.ModuleList([layers.conv_hash['conv'][self.dim](self.input_shape[0], self.channels[0], 1)])
         for n in range(self.n_layers):
             Layer = getattr(layers, self.Layer[n])
             if n > 0 and self.mode == "skip":
@@ -125,7 +125,7 @@ class ConvEncoder(nn.Module):
             current_shape = np.array(self.input_shape[1:])
             for c in self.conv_modules:
                 current_shape = c.output_shape(current_shape)
-            target_shape = int(self.target_shape)
+            target_shape = int(checklist(self.target_shape)[0])
             if self.target_dist == dist.Normal:
                 target_shape *= 2
             flatten_shape = self.channels[-1] * int(np.cumprod(current_shape)[-1])
@@ -227,6 +227,74 @@ class ConvEncoder(nn.Module):
             return out, hidden
         else:
             return out
+    
+    def get_submodule(self, items: Union[int, List[int], range]) -> nn.Module:
+        if isinstance(items, slice):
+            items = list(range(len(self)))[items]
+        elif isinstance(items, int):
+            if items < 0:
+                items = len(self) + items
+            items = [items]
+        if len(items) == 0:
+            raise IndexError("cannot retrieve %s of ConvEncoder")
+        config = OmegaConf.create()
+
+        if 0 in items:
+            config.input_shape = checklist(self.input_shape)
+        if len(self) - 1 in items:
+            config.target_shape = checklist(self.target_shape)
+
+        # set convolution parameters
+        config.dim = self.dim
+        offset = None
+        if len(self) - 1 in items and (self.has_flatten and self.index_flatten):
+            offset = -1 * (self.has_flatten)
+            config.channels = [self.channels[i] for i in items]
+        else:
+            config.channels = [self.channels[i] for i in items] + [self.channels[items[-1] + 1]]
+        config.n_layers = len(items)
+        config.kernel_size = [self.kernel_size[i] for i in items[:offset]]
+        config.dilation = [self.dilation[i] for i in items[:offset]]
+        config.padding = [self.padding[i] for i in items[:offset]]
+        config.dropout = [self.dropout[i] for i in items[:offset]]
+        config.stride = [self.stride[i] for i in items[:offset]]
+        config.nnlin = [self.nnlin[i] for i in items[:offset]]
+        config.block_args = [self.block_args[i] for i in items[:offset]]
+        config.norm = [self.norm[i] for i in items[:offset]]
+        config.mode = self.mode
+        config.bias = self.bias
+        config.Layer = self.Layer
+        module = type(self)(config, init_modules=False)
+
+        conv_modules = []
+        pre_convs = []
+        for i in items:
+            if i == 0:
+                module.dist_module = self.dist_module
+                if self.mode in ["forward"]:
+                    module.pre_conv = self.pre_conv
+            if i != len(self) - 1:
+                conv_modules.append(self.conv_modules[i])
+                if self.mode in ["skip", "residual", "forward+"]:
+                    pre_convs.append(self.pre_conv[i])
+            else:
+                if self.has_flatten:
+                    module.flatten_type = self.flatten_type
+                    module.flatten_module = self.flatten_module
+                if self.has_flatten and (not self.index_flatten):
+                    conv_modules.append(self.conv_modules[i])
+                if hasattr(self, "dist_module"):
+                    module.dist_module = self.dist_module
+                if hasattr(self, "out_nnlin"):
+                    module.out_nnlin = self.out_nnlin
+                if self.mode == "forward":
+                    pre_convs.append(self.pre_conv)
+                else:
+                    pre_convs.append(self.pre_conv[i])
+        module.conv_modules = nn.ModuleList(conv_modules)
+        if self.mode in ["skip", "residual", "forward+"]:
+            module.pre_conv = nn.ModuleList(pre_convs)
+        return module
 
 # old code from encoders.py 
 # have to reimplement Residual and Skip encoders

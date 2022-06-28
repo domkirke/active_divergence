@@ -1,5 +1,5 @@
 import torch, torch.nn as nn, numpy as np
-from active_divergence.utils import checklist, checktuple, checkdist, reshape_batch, flatten_batch
+from active_divergence.utils import checklist, checksize, checkdist, reshape_batch, flatten_batch
 from omegaconf import OmegaConf
 from active_divergence.modules import layers as layers, mlp_dist_hash 
 import active_divergence.distributions as dist
@@ -24,7 +24,7 @@ class MLPEncoder(nn.Module):
             config (OmegaConf): encoder configuration.
         """
         super(MLPEncoder, self).__init__()
-        self.input_shape = checktuple(config.input_shape)
+        self.input_shape = checksize(config.input_shape)
         self.nlayers = config.get('nlayers', 3)
         self.hidden_dims = config.get('hidden_dims', 800)
         self.nnlin = checklist(config.get('nnlin') or layers.DEFAULT_NNLIN, n=self.nlayers)
@@ -35,13 +35,8 @@ class MLPEncoder(nn.Module):
         self.target_dist = checkdist(config.get('target_dist'))
         self.dist_module = mlp_dist_hash[self.target_dist](out_nnlin=self.out_nnlin)
         self.weight_norm = config.get('weight_norm', False)
-        self.target_shape = config.get('target_shape')
-        if hasattr(self.target_shape, "__iter__"):
-            self.target_shape = tuple([d for d in self.target_shape])
-        elif isinstance(self.target_shape, int):
-            self.target_shape = (config.target_shape,)
-        else:
-            raise TypeError('target shape of %s module must be int / iterable ints' % (type(self)))
+        self.target_shape = checksize(config.get('target_shape'))
+        assert self.target_shape is not None
         self.layer = self.Layer if config.get('layer') is None else getattr(layers, config.layer)
         self._init_modules()
 

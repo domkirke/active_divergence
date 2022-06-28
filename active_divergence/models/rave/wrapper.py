@@ -1,6 +1,7 @@
-import sys, torch, pdb, re
-sys.path.append('../')
-from active_divergence.models.rave.rave import model
+import sys, torch, pdb, re, os
+sys.path.append(os.path.dirname(__file__)+'/RAVE')
+
+from rave import model
 from active_divergence.utils import checklist
 from omegaconf import OmegaConf, ListConfig
 
@@ -10,7 +11,7 @@ class RAVE(model.RAVE):
             config = OmegaConf.create()
         # load keys from external configs in case
         config_checkpoint = config.get('checkpoint') or checkpoint
-        if config_checkpoint and transfer:
+        if (config_checkpoint is not None) and transfer:
             config = self.import_checkpoint_config(config, config_checkpoint)
         dict_config = {}
         dict_config['data_size'] = config.get('data_size', 16)
@@ -33,7 +34,7 @@ class RAVE(model.RAVE):
         super(RAVE, self).__init__(**dict_config)
         dict_config['optim_params'] = config.get('optim_params') or kwargs.get('optim_params')
         self.config = OmegaConf.create(dict_config)
-        if config_checkpoint and transfer:
+        if config_checkpoint:# and transfer:
             self.import_checkpoint(config_checkpoint)
 
     @property
@@ -43,7 +44,6 @@ class RAVE(model.RAVE):
     @property
     def train_dataloader(self):
         return self.trainer.datamodule.train_dataloader
-
     
     def import_checkpoint(self, config_checkpoint: OmegaConf):
         if isinstance(config_checkpoint, ListConfig):
