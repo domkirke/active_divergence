@@ -46,7 +46,7 @@ def load_vae(name: str, root: str = "models/vae/"):
             transform.transforms[t].inversion_mode = "griffin_lim"
     model.eval()
     if torch.cuda.is_available():
-        cuda_id = os.environ['CUDA_DEVICE'] or 0
+        cuda_id = int(os.environ.get('CUDA_DEVICE', 0))
         model = model.to("cuda:%d"%cuda_id)
     return model, config, transform
 
@@ -60,7 +60,7 @@ def load_gan(name: str, root: str = "models/gan/"):
             transform.transforms[t].inversion_mode = "griffin_lim"
     model.eval()
     if torch.cuda.is_available():
-        cuda_id = os.environ['CUDA_DEVICE'] or 0
+        cuda_id = int(os.environ.get('CUDA_DEVICE', 0))
         model = model.to("cuda:%d"%cuda_id)
     return model, config, transform
 
@@ -70,7 +70,7 @@ def load_diffwave(name: str, root: str = "models/diffwave"):
     model = models.DiffWave(config, checkpoint=model_path)
     model.eval()
     if torch.cuda.is_available():
-        cuda_id = os.environ['CUDA_DEVICE'] or 0
+        cuda_id = int(os.environ.get('CUDA_DEVICE', 0))
         model = model.to("cuda:%s"%cuda_id)
     return model
 
@@ -80,6 +80,6 @@ def load_ddsp(name: str, root: str = "models/ddsp"):
     model = models.DDSP(config, checkpoint=model_path)
     model.eval()
     if torch.cuda.is_available():
-        cuda_id = os.environ['CUDA_DEVICE'] or 0
+        cuda_id = int(os.environ.get('CUDA_DEVICE', 0))
         model = model.to("cuda:%s"%cuda_id)
     return model

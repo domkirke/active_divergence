@@ -266,7 +266,7 @@ class MLP(nn.Module):
             trace (dict): trace dictionary to populate
         """
         batch_size = x.shape[:-(len(self.input_dim))]
-        out = x.reshape(math.prod(batch_size), math.prod(self.input_dim))
+        out = x.reshape(np.prod(batch_size), -1)
         hidden = []
         if mod_closure is not None:
             mod_closure = checklist(mod_closure, len(self.module))
