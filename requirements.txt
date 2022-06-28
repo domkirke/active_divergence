@@ -12,6 +12,7 @@ hydra-core==1.2
 librosa==0.9
 tqdm
 einops
+omegaconf
 tensorflow
 tensorboard
 dill
